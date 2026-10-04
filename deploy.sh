@@ -6,6 +6,21 @@ echo "           УСТАНОВКА И РАЗВЕРТЫВАНИЕ OpenRKN       
 echo "              OpenWrt 25 (x86_64 / ARM)                   "
 echo "=========================================================="
 
+fetch_url() {
+    url="$1"
+    dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -o "$dest" "$url"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -O "$dest" "$url"
+    elif command -v uclient-fetch >/dev/null 2>&1; then
+        uclient-fetch -q -O "$dest" "$url"
+    else
+        echo "[!] Ошибка: не найден инструмент скачивания (curl/wget/uclient-fetch)." >&2
+        return 1
+    fi
+}
+
 ARCH=$(uname -m)
 case "$ARCH" in
     x86_64|amd64)
@@ -33,6 +48,7 @@ echo "[1/7] Проверка и установка пакетов..."
 if command -v apk >/dev/null 2>&1; then
     echo "  -> Обнаружен apk (OpenWrt 24.10+ / 25.x)..."
     apk update 2>/dev/null || true
+    apk add rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle curl tar gzip 2>/dev/null || \
     apk add rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-certificates curl tar gzip 2>/dev/null || true
 elif command -v opkg >/dev/null 2>&1; then
     echo "  -> Обнаружен opkg (OpenWrt legacy)..."
@@ -57,13 +73,13 @@ chown -R openrkn:openrkn /var/run/openrkn /etc/openrkn/profiles 2>/dev/null || t
 echo "[4/7] Загрузка бинарников openflux и zapret ($ARCH)..."
 if [ ! -x /opt/openrkn/bin/openflux ]; then
     echo "  -> Скачивание openflux ($FLUX_BIN)..."
-    curl -fsSL -o /opt/openrkn/bin/openflux "https://github.com/p1neappleXpress/OpenFlux/releases/download/v0.3.0/$FLUX_BIN"
+    fetch_url "https://github.com/p1neappleXpress/OpenFlux/releases/download/v0.3.0/$FLUX_BIN" /opt/openrkn/bin/openflux
     chmod 755 /opt/openrkn/bin/openflux
 fi
 
 if [ ! -x /opt/openrkn/bin/nfqws ]; then
     echo "  -> Скачивание nfqws (zapret)..."
-    curl -fsSL -o /tmp/zapret.tar.gz "https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz"
+    fetch_url "https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz" /tmp/zapret.tar.gz
     tar -xzf /tmp/zapret.tar.gz -C /tmp
     cp "/tmp/zapret-v72.13/binaries/$ZAPRET_DIR/nfqws" /opt/openrkn/bin/nfqws
     chmod 755 /opt/openrkn/bin/nfqws
@@ -76,7 +92,7 @@ if [ -d "$SCRIPT_DIR/files" ]; then
     cp -r "$SCRIPT_DIR/files"/* /
 else
     echo "  -> Скачивание дерева файлов пакета из GitHub..."
-    curl -fsSL -o /tmp/openrkn-deploy.tar.gz "https://raw.githubusercontent.com/DJEBAN228/OpenRKN-Manager/main/openrkn-deploy.tar.gz"
+    fetch_url "https://raw.githubusercontent.com/DJEBAN228/OpenRKN-Manager/main/openrkn-deploy.tar.gz" /tmp/openrkn-deploy.tar.gz
     tar -xzf /tmp/openrkn-deploy.tar.gz -C /tmp
     cp -r /tmp/files/* /
     rm -rf /tmp/openrkn-deploy.tar.gz /tmp/files
@@ -102,7 +118,7 @@ if [ ! -f /etc/openrkn/exit.conf ]; then
     cp /etc/openrkn/exit.conf.example /etc/openrkn/exit.conf 2>/dev/null || true
 fi
 
-echo "[6/7] Настройка uhttpd на порт 7788..."
+echo "[6/7] Настройка веб-сервера..."
 if command -v uci >/dev/null 2>&1; then
     uci -q get uhttpd.openrkn >/dev/null || {
         uci set uhttpd.openrkn=uhttpd
@@ -133,6 +149,7 @@ echo ""
 echo "=========================================================="
 echo "             OpenRKN УСПЕШНО РАЗВЕРНУТ!                   "
 echo "=========================================================="
-echo "  Панель управления доступна по адресу:"
-echo "  👉 http://$LAN_IP:7788/openrkn/"
+echo "  Панель управления доступна:"
+echo "  👉 http://$LAN_IP/openrkn/       (основной порт LuCI 80)"
+echo "  👉 http://$LAN_IP:7788/openrkn/  (выделенный порт OpenRKN)"
 echo "=========================================================="

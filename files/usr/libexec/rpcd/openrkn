@@ -32,8 +32,8 @@ status() (
 	json_init
 	json_add_boolean ok 1
 	json_add_boolean desired "$([ -f "$OR_RUN/desired" ] && echo 1 || echo 0)"
-	json_add_string board "$([ -f /tmp/sysinfo/board_name ] && cat /tmp/sysinfo/board_name || echo 'Dell Wyse 3040')"
-	json_add_string model "$([ -f /tmp/sysinfo/model ] && cat /tmp/sysinfo/model || echo 'Intel Atom x5-Z8350 (4C)')"
+	json_add_string board "$([ -f /tmp/sysinfo/board_name ] && cat /tmp/sysinfo/board_name || echo 'Generic x86_64')"
+	json_add_string model "$([ -f /tmp/sysinfo/model ] && cat /tmp/sysinfo/model || echo 'x86_64 Processor')"
 	json_add_string release "$([ -f /etc/openwrt_release ] && . /etc/openwrt_release && echo "$DISTRIB_DESCRIPTION" || echo 'OpenWrt 25')"
 	json_add_string kernel "$(uname -r 2>/dev/null || echo '6.12 x86_64')"
 	json_add_int uptime "${uptime_s:-0}"
