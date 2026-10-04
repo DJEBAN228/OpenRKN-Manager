@@ -3,7 +3,7 @@ set -e
 
 echo "=========================================================="
 echo "           УСТАНОВКА И РАЗВЕРТЫВАНИЕ OpenRKN              "
-echo "        Dell Wyse 3040 / OpenWrt 25 (x86_64)              "
+echo "              OpenWrt 25 (x86_64 / ARM)                   "
 echo "=========================================================="
 
 ARCH=$(uname -m)
@@ -13,10 +13,12 @@ case "$ARCH" in
         ZAPRET_DIR="x86_64"
         ;;
     aarch64|arm64)
+        echo "[!] Архитектура $ARCH: экспериментальная поддержка (тестировалось на x86_64)."
         FLUX_BIN="openflux-linux-arm64"
         ZAPRET_DIR="aarch64"
         ;;
     armv7l|arm)
+        echo "[!] Архитектура $ARCH: экспериментальная поддержка (тестировалось на x86_64)."
         FLUX_BIN="openflux-linux-arm"
         ZAPRET_DIR="arm"
         ;;
