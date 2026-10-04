@@ -8,7 +8,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: node tests/host.cjs
       - run: node tests/web.cjs
+      - run: node tests/qr.cjs
       - run: node tests/build-bundle.cjs && git diff --exit-code -- openrkn-deploy.tar.gz
       - run: node --check files/www/openrkn/app.js && node --check files/www/openrkn/api.js && node --check files/www/openrkn/qr.js

@@ -2,7 +2,7 @@
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 if [ "$1" = list ]; then
-	printf '%s\n' '{"status":{},"capabilities":{},"dpi_state":{},"get_config":{},"configure":{"transport":"","url":"","share_host":"","dpi_enabled":true},"start_service":{"service":"","mode":"","strategy":"","preset":""},"restart_service":{"service":"","mode":"","strategy":"","preset":""},"stop_service":{"service":""},"gen_mobile_profile":{},"get_logs":{"lines":100,"service":""}}'
+	printf '%s\n' '{"status":{},"capabilities":{},"dpi_state":{},"get_config":{},"configure":{"transport":"","url":"","share_host":""},"start_service":{"service":"","mode":"","strategy":"","preset":""},"restart_service":{"service":"","mode":"","strategy":"","preset":""},"stop_service":{"service":""},"gen_mobile_profile":{},"get_logs":{"lines":100,"service":""}}'
 	exit 0
 fi
 [ "$1" = call ] || exit 1
@@ -13,21 +13,21 @@ status() (
 	or_config
 	services=$(or_service_json)
 	flux_pid=$(or_pid openflux "$OR_FLUX")
-	nfq_pid=$(or_pid nfqws "$OR_NFQ")
+	. /usr/lib/openrkn/zapret.sh
+	or_zapret_probe
 	json_init
 	json_add_boolean ok 1
 	json_add_boolean desired "$([ -f "$OR_RUN/desired" ] && echo 1 || echo 0)"
 	json_add_string mode "$OR_MODE"
-	json_add_string strategy "$OR_STRATEGY"
-	json_add_boolean dpi_enabled "$OR_DPI_ENABLED"
-	json_add_string state "$([ -n "$flux_pid" ] && { [ "$OR_DPI_ENABLED" = 0 ] || [ -n "$nfq_pid" ]; } && echo ONLINE || { [ -f "$OR_RUN/desired" ] && echo DEGRADED || echo STOPPED; })"
+	json_add_string dpi_mode external
+	json_add_string state "$([ -n "$flux_pid" ] && echo ONLINE || { [ -f "$OR_RUN/desired" ] && echo DEGRADED || echo STOPPED; })"
+	or_zapret_json
 	. /usr/lib/openrkn/telemetry.sh
 	or_telemetry
 	json_add_object services
 	for name in openflux zapret; do
-		case "$name" in openflux) pid=$flux_pid;; zapret) pid=$nfq_pid;; esac
 		json_add_object "$name"
-		json_add_boolean running "$([ -n "$pid" ] && echo 1 || echo 0)"
+		case "$name" in openflux) json_add_boolean running "$([ -n "$flux_pid" ] && echo 1 || echo 0)";; zapret) json_add_boolean running "$ZP_RUNNING";; esac
 		json_close_object
 	done
 	json_close_object
@@ -38,8 +38,8 @@ status() (
 		section && /^[[:space:]]*Type[[:space:]]*=/ {sub(/^[^=]*=[[:space:]]*/, "");sub(/[[:space:]]*[#;].*$/, "");printf "%s%s",sep,$0;sep=", "}' "$OR_CONF" 2>/dev/null)"
 	json_close_object
 	json_add_object processes
-	for name in openflux nfqws; do
-		case "$name" in openflux) pid=$flux_pid;; nfqws) pid=$nfq_pid;; esac
+	for name in openflux; do
+		pid=$flux_pid
 		json_add_object "$name"
 		json_add_boolean running "$([ -n "$pid" ] && echo 1 || echo 0)"
 		json_add_int pid "${pid:-0}"
@@ -51,19 +51,22 @@ status() (
 	done
 	json_add_boolean watchdog "$(or_instance_running "$services" watchdog && echo 1 || echo 0)"
 	json_close_object
-	json_add_boolean nfqueue_rule "$(nft list chain inet fw4 openrkn_output >/dev/null 2>&1 && echo 1 || echo 0)"
+	json_add_boolean output_counter_rule "$(nft list chain inet fw4 openrkn_output >/dev/null 2>&1 && echo 1 || echo 0)"
 	json_dump
 )
 
 capabilities() {
-	printf '%s\n' '{"ok":true,"api_version":2,"service_scope":"stack","modes":["hybrid"],"features":["status","dpi_state","get_config","configure","start_service","stop_service","restart_service","gen_mobile_profile","get_logs"],"unsupported":["sessions","kick_session","autotest","cores","tg_proxies","clients","set_client_profile","diag_check","traceroute"]}'
+	printf '%s\n' '{"ok":true,"api_version":3,"service_scope":"openflux","dpi_mode":"external","modes":["hybrid"],"features":["status","dpi_state","get_config","configure","start_service","stop_service","restart_service","gen_mobile_profile","get_logs"],"unsupported":["managed_nfqws","sessions","kick_session","autotest","cores","tg_proxies","clients","set_client_profile","diag_check","traceroute"]}'
 }
 
 dpi_state() (
 	or_config
-	json_load '{"ok":true,"engine":"zapret","engines":[{"id":"zapret","name":"nfqws","desc":"Исходящие соединения OpenFlux / UID 453"}],"presets":[{"id":"general","name":"General","desc":"TCP fake + multisplit, badseq; QUIC fake ×6","tags":["TCP","TLS","QUIC"]},{"id":"youtube4k","name":"YouTube","desc":"TCP fake + multisplit, md5sig; QUIC fake ×6","tags":["TCP","QUIC"]},{"id":"discord-voice","name":"Discord Voice","desc":"TCP badseq; UDP 443 и 50000–50100 fake ×6","tags":["TCP","UDP"]}]}'
-	case "$OR_STRATEGY" in youtube) OR_STRATEGY=youtube4k;; discord) OR_STRATEGY=discord-voice;; esac
-	json_add_string preset "$OR_STRATEGY"
+	. /usr/lib/openrkn/zapret.sh
+	or_zapret_probe
+	json_init
+	json_add_boolean ok 1
+	json_add_string engine external_zapret
+	or_zapret_json
 	json_dump
 )
 
@@ -117,20 +120,10 @@ mutate() (
 	json_get_var req_preset preset
 	case "$req_service" in ''|openrkn) ;; *) or_error service_control_is_stack_only; return;; esac
 	case "$req_mode" in ''|hybrid) ;; *) or_error unsupported_mode; return;; esac
-	[ -z "$req_strat" ] || [ -z "$req_preset" ] || [ "$req_strat" = "$req_preset" ] || { or_error conflicting_strategy; return; }
-	[ -n "$req_strat" ] || req_strat=$req_preset
-	. /usr/lib/openrkn/presets.sh
-	[ -z "$req_strat" ] || or_preset_valid "$req_strat" || { or_error unsupported_strategy; return; }
+	[ -z "$req_strat$req_preset" ] || { or_error configure_external_zapret_in_manager; return; }
 	if [ "$action" != stop ]; then
 		or_config
 		[ "$OR_ENABLED" = 1 ] || { or_error disabled_in_uci; return; }
-		if [ -n "$req_mode" ] || [ -n "$req_strat" ]; then
-			[ -z "$req_mode" ] || uci -q set "openrkn.main.mode=$req_mode" || { or_error config_failed; return; }
-			[ -z "$req_strat" ] || uci -q set "openrkn.main.strategy=$req_strat" || { or_error config_failed; return; }
-			uci -q commit openrkn || { or_error config_failed; return; }
-			# Parameters must be applied even when the stack is already running.
-			[ ! -f "$OR_RUN/desired" ] || action=restart
-		fi
 	fi
 	/etc/init.d/openrkn "$action" >/dev/null 2>&1 || rc=$?
 	[ "$rc" = 0 ] || { or_error service_action_failed; return; }

@@ -59,7 +59,7 @@ for index in $indices; do
 	json_get_var dial dial
 	json_get_var priority priority
 	[ -n "$name" ] || name=$type
-	case "$type" in direct|yandex|vyandex|boards|mailru|cupsonline) ;; *) or_error unknown_transport; exit 0;; esac
+	case "$type" in direct|yandex|vyandex|boards|mailru) ;; *) or_error unknown_transport; exit 0;; esac
 	case "$name" in ''|*[!A-Za-z0-9_.-]*) or_error invalid_transport_name; exit 0;; esac
 	ini_value "$url" && ini_value "$dial" || { or_error unrepresentable_ini_transport; exit 0; }
 	[ -n "$priority" ] || priority=50

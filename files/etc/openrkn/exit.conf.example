@@ -5,6 +5,7 @@ EncryptionKeyFile = /etc/openrkn/secret.key
 SessionContext = openrkn-v1
 CookieStore = /var/run/openrkn/cookies.json
 
-[Transport cupsonline]
-Type = cupsonline
+[Transport mailru]
+Type = mailru
 Priority = 100
+# Set a shared document HTTPS URL in the web UI before starting.

@@ -114,12 +114,12 @@ const QR = (() => {
     }
     throw new Error('Данные слишком велики для QR-кода');
   }
-  function toSvg(text, quiet = 2) {
+  function toSvg(text, quiet = 4) {
     const m = encode(text), n = m.length, s = n + quiet*2; let d = '';
     for (let y = 0; y < n; y++) { let x = 0; while (x < n) { if (!m[y][x]) { x++; continue; } let w = 1; while (x+w < n && m[y][x+w]) w++; d += `M${x+quiet} ${y+quiet}h${w}v1h-${w}z`; x += w; } }
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}"><rect width="${s}" height="${s}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
   }
-  return { toSvg };
+  return { toSvg, encode };
 })();
 
 /* =====================================================================

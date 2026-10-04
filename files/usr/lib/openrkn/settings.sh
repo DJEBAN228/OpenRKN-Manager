@@ -5,15 +5,12 @@ or_settings() (
 	json_get_var transport transport
 	json_get_var url url
 	json_get_var host share_host
-	json_get_var dpi dpi_enabled
-	case "$transport" in cupsonline|yandex|mailru|direct) ;; *) or_error unsupported_transport; return;; esac
-	case "$dpi" in 0|1) ;; *) or_error invalid_dpi_enabled; return;; esac
+	case "$transport" in yandex|mailru|direct) ;; *) or_error unsupported_transport; return;; esac
 	[ "${#url}" -le 2048 ] && [ "${#host}" -le 253 ] || { or_error invalid_transport_settings; return; }
 	case "$url$host" in *"'"*|*'#'*|*';'*|*' '*|*'
 '*|*"$(printf '\r')"*|*"$(printf '\t')"*) or_error invalid_transport_settings; return;; esac
 	case "$transport" in
 		yandex|mailru) case "$url" in https://?*) ;; *) or_error document_url_required; return;; esac;;
-		cupsonline) case "$url" in ''|https://?*) ;; *) or_error invalid_document_url; return;; esac;;
 		direct) case "$host" in ''|*[!A-Za-z0-9.:-]*) or_error public_host_required; return;; esac;;
 	esac
 	or_config
@@ -31,7 +28,6 @@ or_settings() (
 	uci -q set "openrkn.main.transport=$transport" &&
 	uci -q set "openrkn.main.url=$url" &&
 	uci -q set "openrkn.main.share_host=$host" &&
-	uci -q set "openrkn.main.dpi_enabled=$dpi" &&
 	uci -q set openrkn.main.mode=hybrid &&
 	uci -q commit openrkn || { or_error config_failed; return; }
 	if [ -f "$OR_RUN/desired" ]; then
@@ -50,6 +46,6 @@ or_get_settings() (
 	json_add_string transport "$(uci -q get openrkn.main.transport)"
 	json_add_string url "$(uci -q get openrkn.main.url)"
 	json_add_string share_host "$OR_SHARE_HOST"
-	json_add_boolean dpi_enabled "$OR_DPI_ENABLED"
+	json_add_string dpi_mode external
 	json_dump
 )

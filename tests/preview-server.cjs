@@ -1,7 +1,9 @@
 // Development-only fake router. Never copied to the OpenWrt web root.
-const http = require('node:http'), fs = require('node:fs'), path = require('node:path');
+const http = require('node:http'), fs = require('node:fs'), path = require('node:path'), zlib = require('node:zlib');
 const root = path.resolve(__dirname, '../files/www/openrkn');
-let running = true, preset = 'general', settings = { transport: 'cupsonline', url: '', share_host: '', dpi_enabled: false };
+let running = true, settings = { transport: 'mailru', url: 'https://cloud.mail.ru/public/test-fixture/document', share_host: '', dpi_mode: 'external' };
+const zapret = { mode: 'external', state: 'not_installed', installed: false, running: false, configured: false, postrouting_rules: false, manager_url: 'https://github.com/StressOzz/Zapret-Manager' };
+const fixtureLink = 'openflux://v1/' + zlib.deflateRawSync(Buffer.from(JSON.stringify({ negotiate: true, secret: 'fixture-secret', transports: [{ type: 'mailru', url: settings.url, priority: 100 }] }))).toString('base64url');
 const requests = [];
 const server = http.createServer(async (req, res) => {
   if (req.url === '/ubus') {
@@ -13,19 +15,19 @@ const server = http.createServer(async (req, res) => {
       else if (sid !== 'a'.repeat(32)) code = 6;
       else if (object === 'session') data = method === 'access' ? { access: true } : {};
       else switch (method) {
-        case 'capabilities': data = { ok: true, api_version: 2, service_scope: 'stack' }; break;
+        case 'capabilities': data = { ok: true, api_version: 3, service_scope: 'openflux' }; break;
         case 'get_config': data = { ok: true, ...settings }; break;
-        case 'status': data = { ok: true, state: running ? 'ONLINE' : 'STOPPED', desired: running, dpi_enabled: settings.dpi_enabled,
+        case 'status': data = { ok: true, state: running ? 'ONLINE' : 'STOPPED', desired: running, dpi_mode: 'external', zapret,
           model: 'OpenWrt x86_64 · test fixture', release: 'OpenWrt 25 · test fixture', uptime: 38591, load: [0.08, 0.12, 0.1],
           cpu: { total: 12, cores: [9, 18, 10, 11] }, ram: { total_kib: 2097152, used_kib: 348160 },
-          processes: { openflux: { running }, nfqws: { running: running && settings.dpi_enabled }, watchdog: running },
-          nfqueue_rule: true, openflux: { transport: settings.transport }, wan: { ip: '192.0.2.10' },
+          processes: { openflux: { running }, watchdog: running },
+          output_counter_rule: true, openflux: { transport: settings.transport }, wan: { ip: '192.0.2.10' },
           ports: { eth0: { role: 'WAN', up: true, speed: 1000, ip: '192.0.2.10', rx_bps: 1500000, tx_bps: 100000, rx_bytes: 409600000, tx_bytes: 20480000 } } }; break;
-        case 'dpi_state': data = { ok: true, preset, presets: [{ id: 'general', name: 'General', desc: 'TCP fake + multisplit' }, { id: 'youtube4k', name: 'YouTube', desc: 'md5sig + QUIC fake' }] }; break;
+        case 'dpi_state': data = { ok: true, engine: 'external_zapret', zapret }; break;
         case 'start_service': case 'restart_service': running = true; data = { ok: true }; break;
         case 'stop_service': running = false; data = { ok: true }; break;
         case 'configure': settings = params; data = { ok: true }; break;
-        case 'gen_mobile_profile': data = { ok: true, link: 'openflux://v1/fixture', files: { 'mobile.conf': '[Interface]\nEncryptionKeyFile = secret.key\n', 'secret.key': 'fixture-secret', 'share.link': 'openflux://v1/fixture' } }; break;
+        case 'gen_mobile_profile': data = { ok: true, link: fixtureLink, files: { 'mobile.conf': '[Interface]\nEncryptionKeyFile = secret.key\n', 'secret.key': 'fixture-secret', 'share.link': fixtureLink } }; break;
         case 'get_logs': data = { ok: true, logs: '2026-10-04 openflux: Running as EXIT NODE (mode=l4)\n2026-10-04 watchdog: fixture check OK\n<script>test input is plain text</script>' }; break;
         default: code = 3;
       }

@@ -11,10 +11,8 @@ while :; do
 	[ -f "$OR_RUN/desired" ] || exit 0
 	data=$(or_service_json) || { or_log 'watchdog: ubus unavailable'; continue; }
 	or_config
-	names=openflux
-	[ "$OR_DPI_ENABLED" = 0 ] || names="openflux nfqws"
-	for name in $names; do
-		case "$name" in openflux) binary=$OR_FLUX;; nfqws) binary=$OR_NFQ;; esac
+	for name in openflux; do
+		binary=$OR_FLUX
 		if ! or_pid "$name" "$binary" >/dev/null; then
 			or_log "watchdog: $name is not alive"
 			# Signal only its procd instance. procd owns termination and respawn.

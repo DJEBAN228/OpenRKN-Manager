@@ -6,14 +6,11 @@
 OR_RUN=/var/run/openrkn
 OR_LOG=/tmp/openrkn.log
 OR_FLUX=/opt/openrkn/bin/openflux
-OR_NFQ=/opt/openrkn/bin/nfqws
 
 or_config() {
 	config_load openrkn
 	config_get_bool OR_ENABLED main enabled 1
 	config_get OR_MODE main mode 'hybrid'
-	config_get OR_STRATEGY main strategy 'general'
-	config_get_bool OR_DPI_ENABLED main dpi_enabled 0
 	config_get OR_CONF main openflux_config /etc/openrkn/exit.conf
 	config_get OR_SHARE_HOST main share_host ''
 	config_get OR_PROFILE_TIMEOUT main profile_timeout 5

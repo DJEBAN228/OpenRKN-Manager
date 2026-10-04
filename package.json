@@ -1,0 +1,8 @@
+{
+  "name": "openrkn-manager",
+  "version": "0.3.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": { "test": "node tests/host.cjs && node tests/web.cjs && node tests/qr.cjs" },
+  "devDependencies": { "jsqr": "1.4.0" }
+}

@@ -12,7 +12,7 @@ const run = (args, input = '') => {
   assert.equal(p.status, 0, p.stderr || `dash exit ${p.status}`);
   return p.stdout.trim();
 };
-for (const f of ['files/etc/init.d/openrkn', 'files/usr/lib/openrkn/common.sh', 'files/usr/lib/openrkn/presets.sh', 'files/usr/lib/openrkn/settings.sh', 'files/usr/lib/openrkn/telemetry.sh', 'files/etc/uci-defaults/90-openrkn-uhttpd', 'deploy.sh',
+for (const f of ['files/etc/init.d/openrkn', 'files/usr/lib/openrkn/common.sh', 'files/usr/lib/openrkn/zapret.sh', 'files/usr/lib/openrkn/settings.sh', 'files/usr/lib/openrkn/telemetry.sh', 'files/usr/lib/openrkn/transports.sh', 'files/etc/uci-defaults/90-openrkn-uhttpd', 'deploy.sh',
   'files/usr/libexec/rpcd/openrkn', ...fs.readdirSync(path.join(root, 'files/usr/libexec/openrkn')).map(n => 'files/usr/libexec/openrkn/' + n)]) {
   assert(!fs.readFileSync(path.join(root, f)).includes(13), `CR in ${f}`);
   run(['-n', f]);
@@ -58,6 +58,33 @@ or_config() { OR_PROFILE_TIMEOUT=1; }
 try {
   fs.mkdirSync(path.join(temp, 'run'));
   fs.mkdirSync(path.join(temp, 'profiles'));
+  const zapretProbe = fs.readFileSync(path.join(root, 'files/usr/lib/openrkn/zapret.sh'), 'utf8')
+    .replaceAll('/etc/init.d/zapret', t + '/zapret-init').replaceAll('/proc/[0-9]*/exe', t + '/proc/[0-9]*/exe');
+  fs.mkdirSync(t + '/proc'); fs.mkdirSync(t + '/proc/123');
+  fs.writeFileSync(t + '/proc/123/exe', '');
+  fs.writeFileSync(t + '/proc/123/cmdline', '/opt/zapret/nfq/nfqws\0--qnum=200\0');
+  fs.writeFileSync(t + '/zapret-init', '#!/bin/sh\n', { mode: 0o755 });
+  fs.writeFileSync(t + '/zapret-test', shim + `
+phase=$1
+readlink() { [ "$phase" != not_running ] || return 1; printf '/opt/zapret/nfq/nfqws\\n'; }
+uci() {
+  case "$*" in
+    *NFQWS_OPT) [ "$phase" = not_configured ] || printf '%s' '--dpi-desync=multisplit';;
+    *NFQWS_ENABLE) printf 1;;
+    *FILTER_MARK) [ "$phase" != check_filters ] || printf 1;;
+  esac
+  return 0
+}
+nft() { [ "$phase" != rules_missing ] || return 1; printf 'type filter hook postrouting priority 101; queue num 200 bypass\\n'; }
+` + zapretProbe + '\nor_zapret_probe\njson_init\nor_zapret_json\njson_dump\n');
+  for (const phase of ['detected', 'not_running', 'not_configured', 'rules_missing', 'check_filters']) {
+    assert.equal(JSON.parse(run([t + '/zapret-test', phase])).zapret.state, phase);
+  }
+  fs.unlinkSync(t + '/zapret-init');
+  assert.equal(JSON.parse(run([t + '/zapret-test', 'detected'])).zapret.state, 'not_installed');
+  const initSource = fs.readFileSync(path.join(root, 'files/etc/init.d/openrkn'), 'utf8');
+  assert(!initSource.includes('procd_open_instance nfqws'), 'external Zapret must not have a second owner');
+  assert(!/\bqueue\s+num\b/.test(fs.readFileSync(path.join(root, 'files/usr/share/nftables.d/table-post/90-openrkn.nft'), 'utf8')), 'do not queue traffic twice');
   const webDir = t + '/web';
   fs.mkdirSync(webDir, { mode: 0o700 });
   fs.mkdirSync(webDir + '/assets', { mode: 0o700 });
@@ -93,7 +120,20 @@ uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
   assert.equal(configure({ ...mailru, url: 'http://docs.mail.ru/x' }).error, 'document_url_required');
   assert.equal(configure({ ...mailru, url: "https://docs.mail.ru/x'\nRole = client" }).error, 'invalid_transport_settings');
   assert.equal(configure({ ...mailru, transport: 'unknown' }).error, 'unsupported_transport');
-  assert.equal(configure({ ...mailru, transport: 'cupsonline', url: '' }).ok, true);
+  assert.equal(configure({ ...mailru, transport: 'yandex', url: '' }).error, 'document_url_required');
+  const transportLibrary = slash(path.join(root, 'files/usr/lib/openrkn/transports.sh'));
+  const checkTransport = (config, mode = 'ready') => {
+    fs.writeFileSync(t + '/transport.conf', config);
+    return run(['-c', `PATH=/usr/bin:/bin; export PATH; . ${shellQuote(transportLibrary)}; if or_transports_valid ${shellQuote(t + '/transport.conf')} ${shellQuote(mode)}; then printf yes; else printf no; fi`]);
+  };
+  const document = '[Transport document]\nType = mailru\n';
+  assert.equal(checkTransport(document), 'no', 'missing URL must prevent starting');
+  assert.equal(checkTransport(document, 'supported'), 'yes', 'unfinished supported config must be preserved');
+  assert.equal(checkTransport(document + 'URL = https://cloud.mail.ru/public/fixture/document\n'), 'yes');
+  assert.equal(checkTransport(document + 'URL = http://example.org\n'), 'no');
+  assert.equal(checkTransport('[Transport direct]\nType = direct\nListen = 0.0.0.0:8443\n'), 'yes');
+  assert.equal(checkTransport('[Transport unknown]\nType = unknown\n', 'supported'), 'no');
+  assert.equal(checkTransport(document + 'URL = https://example.org\n[Transport bad]\nType = unknown\n'), 'no', 'every transport must be supported');
   const rpcMock = rpc.replace('. /usr/lib/openrkn/common.sh', shim);
   fs.writeFileSync(path.join(temp, 'rpc'), rpcMock);
   const invoke = req => JSON.parse(run([t + '/rpc', 'call', 'get_logs'], req + '\n'));
@@ -137,7 +177,7 @@ uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
   assert.equal(fs.readdirSync(path.join(temp, 'profiles')).length, 1, 'failed export must clean up');
   assert.equal(exportProfile({ config: { ...fixture.config, context: '' } }).ok, true, 'empty context must not fail shell group');
   assert.equal(exportProfile({ config: { ...fixture.config, negotiate: false } }).error, 'profile_requires_negotiated_session');
-  console.log('PASS: POSIX syntax, uhttpd permissions/index, RPC schema/ACL, logs, Mail.ru settings, profile export and cleanup');
+  console.log('PASS: POSIX syntax, uhttpd permissions/index, external Zapret integration, RPC/ACL, logs, transports and profiles');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }
