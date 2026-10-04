@@ -1,0 +1,101 @@
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+START=95
+STOP=10
+
+start_service() {
+	. /usr/lib/openrkn/common.sh
+	or_config
+	[ "$OR_ENABLED" = 1 ] || return 0
+	# Repeated start must preserve live workers' FIFOs and PID files.
+	services=$(or_service_json)
+	if or_instance_running "$services" openflux || or_instance_running "$services" nfqws; then
+		return 0
+	fi
+	[ -x "$OR_NFQ" ] || {
+		logger -t openrkn 'Missing nfqws binary'
+		return 1
+	}
+	if [ "$OR_MODE" != zapret_only ]; then
+		[ -x "$OR_FLUX" ] && [ -r "$OR_CONF" ] || {
+			logger -t openrkn 'Missing openflux binary or exit configuration'
+			return 1
+		}
+	fi
+	[ "$(id -u openrkn 2>/dev/null)" = 453 ] || {
+		logger -t openrkn 'User openrkn must have UID 453 (NFQUEUE selector)'
+		return 1
+	}
+	[ "$(uci -q get firewall.@defaults[0].auto_includes)" != 0 ] || return 1
+	fw4 check >/dev/null 2>&1 || return 1
+	# /var/run is tmpfs on OpenWrt. The daemon owns only its private runtime dir.
+	umask 077
+	mkdir -p "$OR_RUN" /etc/openrkn/profiles || return 1
+	chown openrkn:openrkn "$OR_RUN" || return 1
+	chmod 700 "$OR_RUN" /etc/openrkn/profiles
+	[ ! -L "$OR_LOG" ] || return 1
+	touch "$OR_LOG" || return 1
+	chown openrkn:openrkn "$OR_LOG"
+	chmod 600 "$OR_LOG"
+	rm -f "$OR_RUN/share.link" "$OR_RUN/openflux.pid" "$OR_RUN/nfqws.pid"
+	touch "$OR_RUN/desired"
+	# Ensure a newly installed include is active before launching the proxy.
+	fw4 reload >/dev/null 2>&1 || { rm -f "$OR_RUN/desired"; return 1; }
+
+	case "$OR_STRATEGY" in
+		youtube|youtube4k)
+			nfq_args="--qnum=200 --dpi-desync-fwmark=0x40000000 --filter-tcp=80,443 --dpi-desync=fake,disoob --dpi-desync-split-pos=2 --dpi-desync-fooling=md5sig --new --filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6"
+			;;
+		discord|discord-voice)
+			nfq_args="--qnum=200 --dpi-desync-fwmark=0x40000000 --filter-tcp=80,443 --dpi-desync=fake,split2 --new --filter-udp=50000-50100 --dpi-desync=fake"
+			;;
+		*)
+			nfq_args="--qnum=200 --dpi-desync-fwmark=0x40000000 --filter-tcp=80,443 --dpi-desync=fake,multisplit --dpi-desync-split-pos=1 --dpi-desync-fooling=badseq --new --filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6"
+			;;
+	esac
+
+	procd_open_instance nfqws
+	procd_set_param command /usr/libexec/openrkn/runner nfqws "$OR_NFQ" $nfq_args
+	procd_set_param respawn 3600 5 0
+	procd_set_param term_timeout 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+
+	if [ "$OR_MODE" != zapret_only ]; then
+		procd_open_instance openflux
+		procd_set_param command /usr/libexec/openrkn/runner openflux "$OR_FLUX" \
+			"--config=$OR_CONF" --role=exit --mode=l4 --negotiate --share
+		[ -z "$OR_SHARE_HOST" ] || procd_append_param command "--share-host=$OR_SHARE_HOST"
+		procd_set_param user openrkn
+		procd_set_param group openrkn
+		procd_set_param respawn 3600 5 0
+		procd_set_param term_timeout 5
+		procd_set_param file "$OR_CONF" /etc/config/openrkn
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_close_instance
+	fi
+
+	procd_open_instance watchdog
+	procd_set_param command /usr/libexec/openrkn/watchdog
+	procd_set_param respawn 3600 5 0
+	procd_set_param term_timeout 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+stop_service() {
+	# rc.common asks procd to terminate all instances after this hook returns.
+	rm -f /var/run/openrkn/desired /var/run/openrkn/share.link
+}
+
+service_triggers() {
+	procd_add_reload_trigger openrkn
+}
+
+reload_service() {
+	stop
+	start
+}

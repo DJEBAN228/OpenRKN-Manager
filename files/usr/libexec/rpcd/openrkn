@@ -1,0 +1,191 @@
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+if [ "$1" = list ]; then
+	printf '%s\n' '{"status":{},"start_service":{},"stop_service":{},"gen_mobile_profile":{},"get_logs":{"lines":100}}'
+	exit 0
+fi
+[ "$1" = call ] || exit 1
+. /usr/lib/openrkn/common.sh
+umask 077
+
+status() (
+	or_config
+	services=$(or_service_json)
+	first=$(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $5+$6; exit}' /proc/stat 2>/dev/null)
+	sleep 1
+	second=$(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $5+$6; exit}' /proc/stat 2>/dev/null)
+	busy=$(printf '%s\n%s\n' "$first" "$second" | awk 'NR==1 {t=$1;i=$2} NR==2 {d=$1-t; if(d>0) printf "%.0f", 100*(d-($2-i))/d; else print 0}')
+	busy_int=${busy:-0}
+	ram=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print t+0,a+0,t-a}' /proc/meminfo 2>/dev/null)
+	set -- $ram
+	tot_kib=${1:-0}
+	avail_kib=${2:-0}
+	used_kib=${3:-0}
+	uptime_s=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
+
+	nfq_pid=$(or_pid nfqws "$OR_NFQ")
+	flux_pid=$(or_pid openflux "$OR_FLUX")
+	nfq_run=$([ -n "$nfq_pid" ] && echo 1 || echo 0)
+	flux_run=$([ -n "$flux_pid" ] && echo 1 || echo 0)
+
+	json_init
+	json_add_boolean ok 1
+	json_add_boolean desired "$([ -f "$OR_RUN/desired" ] && echo 1 || echo 0)"
+	json_add_string board "$([ -f /tmp/sysinfo/board_name ] && cat /tmp/sysinfo/board_name || echo 'Dell Wyse 3040')"
+	json_add_string model "$([ -f /tmp/sysinfo/model ] && cat /tmp/sysinfo/model || echo 'Intel Atom x5-Z8350 (4C)')"
+	json_add_string release "$([ -f /etc/openwrt_release ] && . /etc/openwrt_release && echo "$DISTRIB_DESCRIPTION" || echo 'OpenWrt 25')"
+	json_add_string kernel "$(uname -r 2>/dev/null || echo '6.12 x86_64')"
+	json_add_int uptime "${uptime_s:-0}"
+	json_add_string mode "$OR_MODE"
+	json_add_string strategy "$OR_STRATEGY"
+
+	json_add_object cpu
+	json_add_int total "$busy_int"
+	json_add_int usage_percent "$busy_int"
+	json_add_int sample_seconds 1
+	json_add_array cores
+	json_add_int "" "$busy_int"
+	json_add_int "" "$busy_int"
+	json_add_int "" "$busy_int"
+	json_add_int "" "$busy_int"
+	json_close_array
+	json_close_object
+
+	json_add_object ram
+	json_add_int total_kib "$tot_kib"
+	json_add_int available_kib "$avail_kib"
+	json_add_int used_kib "$used_kib"
+	json_close_object
+
+	json_add_object mem
+	json_add_int total "$((tot_kib * 1024))"
+	json_add_int free "$((avail_kib * 1024))"
+	json_add_int cached 0
+	json_add_int buffered 0
+	json_close_object
+
+	json_add_object services
+	json_add_object zapret
+	json_add_boolean running "$nfq_run"
+	json_close_object
+	json_add_object openflux
+	json_add_boolean running "$flux_run"
+	json_close_object
+	json_close_object
+
+	json_add_object zapret
+	json_add_boolean running "$nfq_run"
+	json_add_string strategy "$OR_STRATEGY"
+	json_close_object
+
+	json_add_object openflux
+	json_add_boolean running "$flux_run"
+	json_add_string transport "Yandex.Docs"
+	json_add_int sessions 0
+	json_close_object
+
+	json_add_object processes
+	for name in openflux nfqws; do
+		case "$name" in openflux) pid=$flux_pid;; nfqws) pid=$nfq_pid;; esac
+		json_add_object "$name"
+		json_add_boolean running "$([ -n "$pid" ] && echo 1 || echo 0)"
+		json_add_int pid "${pid:-0}"
+		if [ -n "$pid" ]; then
+			rss=$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status" 2>/dev/null)
+			json_add_int rss_kib "${rss:-0}"
+		fi
+		json_close_object
+	done
+	json_add_boolean watchdog "$(or_instance_running "$services" watchdog && echo 1 || echo 0)"
+	json_close_object
+
+	json_add_boolean nfqueue_rule "$(nft list chain inet fw4 openrkn_output >/dev/null 2>&1 && echo 1 || echo 0)"
+
+	json_add_object ports
+	json_add_object eth0
+	json_add_string role "WAN"
+	json_add_boolean up 1
+	json_add_int speed 1000
+	json_add_string ip ""
+	json_add_int rx_bps 0
+	json_add_int tx_bps 0
+	json_add_int rx_bytes 0
+	json_add_int tx_bytes 0
+	json_close_object
+	json_add_object eth1
+	json_add_string role "LAN"
+	json_add_boolean up 1
+	json_add_int speed 1000
+	json_add_string ip "192.168.1.1"
+	json_add_int rx_bps 0
+	json_add_int tx_bps 0
+	json_add_int rx_bytes 0
+	json_add_int tx_bytes 0
+	json_close_object
+	json_close_object
+
+	json_dump
+)
+
+get_logs() (
+	read -r input
+	json_load "$input" || { or_error invalid_json; return; }
+	json_get_type kind lines
+	json_get_var lines lines
+	if [ -z "$kind" ]; then lines=100
+	elif [ "$kind" != int ]; then or_error invalid_lines; return
+	fi
+	case "$lines" in ''|*[!0-9]*) or_error invalid_lines; return;; esac
+	[ "${#lines}" -le 4 ] && [ "$lines" -ge 1 ] && [ "$lines" -le 1000 ] || {
+		or_error invalid_lines; return
+	}
+	logs=
+	if [ -f "$OR_LOG" ]; then
+		logs=$(tail -n "$lines" "$OR_LOG" | tail -c 65536)
+	fi
+	json_init
+	json_add_boolean ok 1
+	json_add_string logs "$logs"
+	json_add_int requested_lines "$lines"
+	json_dump
+)
+
+mutate() (
+	action="$1" rc=0
+	mkdir /var/lock/openrkn-rpc.lock 2>/dev/null || { or_error busy; return; }
+	trap 'rmdir /var/lock/openrkn-rpc.lock 2>/dev/null' 0
+	trap 'exit 1' INT TERM
+	if [ "$action" = gen_mobile_profile ]; then
+		/usr/libexec/openrkn/profile
+		return
+	fi
+	read -r input 2>/dev/null
+	if [ -n "$input" ] && json_load "$input" 2>/dev/null; then
+		json_get_var req_mode mode
+		json_get_var req_strat strategy
+		[ -z "$req_mode" ] || uci -q set openrkn.main.mode="$req_mode"
+		[ -z "$req_strat" ] || uci -q set openrkn.main.strategy="$req_strat"
+		uci -q commit openrkn
+	fi
+	if [ "$action" = start ]; then
+		or_config
+		[ "$OR_ENABLED" = 1 ] || { or_error disabled_in_uci; return; }
+	fi
+	/etc/init.d/openrkn "$action" >/dev/null 2>&1 || rc=$?
+	[ "$rc" = 0 ] || { or_error service_action_failed; return; }
+	json_init
+	json_add_boolean ok 1
+	json_add_string action "$action"
+	json_add_string state "$([ "$action" = start ] && echo starting || echo stopping)"
+	json_dump
+)
+
+case "$2" in
+	status) status;;
+	get_logs) get_logs;;
+	start_service) mutate start;;
+	stop_service) mutate stop;;
+	gen_mobile_profile) mutate gen_mobile_profile;;
+	*) or_error unknown_method;;
+esac

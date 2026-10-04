@@ -1,0 +1,11 @@
+{
+  "openrkn-read": {
+    "description": "Read OpenRKN status and logs",
+    "read": { "ubus": { "openrkn": ["status", "get_logs"] } }
+  },
+  "openrkn-admin": {
+    "description": "Control OpenRKN and export secret-bearing client profiles",
+    "read": { "ubus": { "openrkn": ["status", "get_logs"] } },
+    "write": { "ubus": { "openrkn": ["start_service", "stop_service", "gen_mobile_profile"] } }
+  }
+}

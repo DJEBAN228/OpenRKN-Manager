@@ -1,0 +1,30 @@
+#!/bin/sh
+. /usr/lib/openrkn/common.sh
+sleeper=
+trap '[ -z "$sleeper" ] || kill "$sleeper" 2>/dev/null; exit 0' TERM INT
+while :; do
+	# First check after a startup grace period. procd respawn handles fast failures.
+	sleep 60 &
+	sleeper=$!
+	wait "$sleeper"
+	sleeper=
+	[ -f "$OR_RUN/desired" ] || exit 0
+	data=$(or_service_json) || { or_log 'watchdog: ubus unavailable'; continue; }
+	for name in openflux nfqws; do
+		case "$name" in openflux) binary=$OR_FLUX;; nfqws) binary=$OR_NFQ;; esac
+		if ! or_pid "$name" "$binary" >/dev/null; then
+			or_log "watchdog: $name is not alive"
+			# Signal only its procd instance. procd owns termination and respawn.
+			if or_instance_running "$data" "$name" && [ -f "$OR_RUN/desired" ]; then
+				ubus -t 3 call service signal \
+					"{\"name\":\"openrkn\",\"instance\":\"$name\",\"signum\":15}" >/dev/null 2>&1
+			fi
+		fi
+	done
+	# Truncate in place: existing writers keep their descriptor; no flash writes.
+	size=$(wc -c < "$OR_LOG")
+	if [ "$size" -gt 1048576 ]; then
+		tail -n 1000 "$OR_LOG" > "$OR_RUN/log.tail" && cat "$OR_RUN/log.tail" > "$OR_LOG"
+		rm -f "$OR_RUN/log.tail"
+	fi
+done

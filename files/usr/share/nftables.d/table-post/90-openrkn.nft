@@ -1,0 +1,10 @@
+# Loaded atomically with fw4, including on every firewall reload.
+# UID, queue and mark are a contract with init.d/openrkn and package USERID.
+chain openrkn_output {
+	type filter hook output priority mangle + 1; policy accept;
+	oifname "lo" return
+	fib daddr type local return
+	meta mark & 0x40000000 != 0 return
+	meta skuid 453 tcp dport { 80, 443 } counter queue num 200 bypass
+	meta skuid 453 udp dport 443 counter queue num 200 bypass
+}

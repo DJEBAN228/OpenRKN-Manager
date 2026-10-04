@@ -1,0 +1,93 @@
+#!/bin/sh
+# Decode with the core itself: v1 is raw DEFLATE, not plain base64 JSON.
+. /usr/lib/openrkn/common.sh
+umask 077
+or_config
+pid=$(or_pid openflux "$OR_FLUX") || { or_error service_not_running; exit 0; }
+elapsed=0
+while [ ! -s "$OR_RUN/share.link" ]; do
+	[ "$elapsed" -lt "$OR_PROFILE_TIMEOUT" ] || { or_error share_not_ready; exit 0; }
+	sleep 1
+	elapsed=$((elapsed + 1))
+done
+read -r link < "$OR_RUN/share.link"
+parsed=$(printf '%s\n' "$link" | "$OR_FLUX" --parse-link - 2>/dev/null) || {
+	or_error incompatible_openflux_or_invalid_link; exit 0
+}
+json_load "$parsed" && json_select config || { or_error invalid_share_config; exit 0; }
+json_get_var secret secret
+json_get_var context context
+json_get_var codec codec
+json_get_var negotiate negotiate
+json_get_var mode mode
+[ -z "$mode" ] || { or_error unsupported_share_mode; exit 0; }
+[ "$negotiate" = 1 ] || { or_error profile_requires_negotiated_session; exit 0; }
+# INI has no quoting/escaping: fail instead of silently corrupting values.
+ini_value() {
+	case "$1" in *'#'*|*';'*|*'
+'*|*"$(printf '\r')"*|" "*|*" "|"$(printf '\t')"*|*"$(printf '\t')") return 1;; esac
+	return 0
+}
+ini_value "$context" || { or_error unrepresentable_ini_context; exit 0; }
+[ -n "$codec" ] || codec=batched
+case "$codec" in batched|legacy) ;; *) or_error invalid_codec; exit 0;; esac
+dir=$(mktemp -d /etc/openrkn/profiles/mobile.XXXXXX) || { or_error profile_storage_failed; exit 0; }
+complete=0
+trap '[ "$complete" = 1 ] || rm -rf "$dir"' 0
+trap 'exit 1' INT TERM
+conf="$dir/mobile.conf"
+key="$dir/secret.key"
+{
+	printf '[Interface]\nRole = client\nInbound = socks5\nSocks5 = 127.0.0.1:1080\nCodec = %s\n' "$codec"
+	[ "$negotiate" != 1 ] || printf 'Negotiate = true\n'
+	[ -z "$secret" ] || printf 'EncryptionKeyFile = %s\n' "$key"
+	[ -z "$context" ] || printf 'SessionContext = %s\n' "$context"
+	:
+} > "$conf" || { or_error profile_storage_failed; exit 0; }
+# OpenFlux trims key-file whitespace; preserve only representable secrets.
+if [ -n "$secret" ]; then
+	ini_value "$secret" || { or_error unrepresentable_secret; exit 0; }
+	printf '%s' "$secret" > "$key" || { or_error profile_storage_failed; exit 0; }
+fi
+json_select transports && json_get_keys indices || { or_error missing_transports; exit 0; }
+count=0
+for index in $indices; do
+	json_select "$index" || { or_error invalid_transport; exit 0; }
+	json_get_var type type
+	json_get_var name name
+	json_get_var url url
+	json_get_var dial dial
+	json_get_var priority priority
+	[ -n "$name" ] || name=$type
+	case "$type" in direct|yandex|vyandex|boards|mailru|cupsonline) ;; *) or_error unknown_transport; exit 0;; esac
+	case "$name" in ''|*[!A-Za-z0-9_.-]*) or_error invalid_transport_name; exit 0;; esac
+	ini_value "$url" && ini_value "$dial" || { or_error unrepresentable_ini_transport; exit 0; }
+	[ -n "$priority" ] || priority=50
+	case "$priority" in *[!0-9]*|'') or_error invalid_priority; exit 0;; esac
+	{
+		printf '\n[Transport %s]\nType = %s\nPriority = %s\n' "$name" "$type" "$priority"
+		[ -z "$url" ] || printf 'URL = %s\n' "$url"
+		[ -z "$dial" ] || printf 'Dial = %s\n' "$dial"
+		:
+	} >> "$conf" || { or_error profile_storage_failed; exit 0; }
+	count=$((count + 1))
+	json_select ..
+done
+[ "$count" -gt 0 ] || { or_error missing_transports; exit 0; }
+# Stop/restart during export must not return a stale generation.
+[ "$(or_pid openflux "$OR_FLUX")" = "$pid" ] && [ -f "$OR_RUN/desired" ] || {
+	or_error service_changed; exit 0
+}
+printf '%s\n' "$link" > "$dir/share.link" || { or_error profile_storage_failed; exit 0; }
+complete=1
+json_init
+json_add_boolean ok 1
+json_add_string link "$link"
+json_add_string uri "$link"
+json_add_string path "$conf"
+json_add_string config "$(cat "$conf")"
+json_add_string conf "$(cat "$conf")"
+json_add_string name "openflux-mobile.conf"
+# Clients should import the link; CLI users copy the whole directory and update
+# EncryptionKeyFile to its destination path. No key is returned separately.
+json_dump

@@ -1,0 +1,63 @@
+#!/bin/sh
+# Keep the real daemon foregrounded under a supervised wrapper; capture --share
+# from this same exit (a second --share process would bind the same transport).
+. /usr/lib/openrkn/common.sh
+name="$1"
+shift
+case "$name" in openflux|nfqws) ;; *) exit 2;; esac
+umask 077
+fifo="$OR_RUN/$name.fifo"
+rm -f "$fifo" "$OR_RUN/$name.pid"
+[ "$name" != openflux ] || rm -f "$OR_RUN/share.link"
+mkfifo -m 600 "$fifo" || exit 1
+child=
+collector=
+cleanup() {
+	trap '' TERM INT
+	trap - 0
+	if [ -n "$child" ] || [ -n "$collector" ]; then
+		[ -z "$child" ] || kill -TERM "$child" 2>/dev/null
+		[ -z "$collector" ] || kill -TERM "$collector" 2>/dev/null
+		# Unreaped children retain their PIDs; no detached timer or PID reuse.
+		sleep 1
+		[ -z "$child" ] || kill -KILL "$child" 2>/dev/null
+		[ -z "$collector" ] || kill -KILL "$collector" 2>/dev/null
+	fi
+	[ -z "$child" ] || wait "$child" 2>/dev/null
+	[ -z "$collector" ] || wait "$collector" 2>/dev/null
+	rm -f "$fifo" "$OR_RUN/$name.pid"
+	[ "$name" != openflux ] || rm -f "$OR_RUN/share.link"
+}
+trap 'cleanup; exit 0' TERM INT
+trap cleanup 0
+(
+	while IFS= read -r line || [ -n "$line" ]; do
+		case "$line" in
+			*openflux://*)
+				link="openflux://${line#*openflux://}"
+				# Only canonical bare payloads, never terminal escapes or log tails.
+				case "$link" in
+					openflux://v1/*)
+						body=${link#openflux://v1/}
+						case "$body" in ''|*[!A-Za-z0-9_-]*) continue;; esac
+						[ "${#link}" -le 32768 ] || continue
+						printf '%s\n' "$link" > "$OR_RUN/share.link.new"
+						mv -f "$OR_RUN/share.link.new" "$OR_RUN/share.link"
+						;;
+				 esac
+				continue;;
+			*█*|*▀*|*▄*) continue;; # QR contains the same secret as the link.
+		 esac
+		or_log "$name: $line"
+	done < "$fifo"
+) &
+collector=$!
+"$@" > "$fifo" 2>&1 &
+child=$!
+printf '%s\n' "$child" > "$OR_RUN/$name.pid"
+wait "$child"
+rc=$?
+wait "$collector"
+collector=
+child=
+exit "$rc"

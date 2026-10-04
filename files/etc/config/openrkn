@@ -1,0 +1,10 @@
+config core 'main'
+	option enabled '1'
+	option mode 'hybrid'
+	option strategy 'youtube'
+	option openflux_config '/etc/openrkn/exit.conf'
+	# Public DNS name/IP for direct transport; empty for document transports.
+	option share_host ''
+	option profile_timeout '5'
+	option quic_block '1'
+	option flow_offload_fix '1'
