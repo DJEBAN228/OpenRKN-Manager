@@ -6,7 +6,9 @@ or_transports_valid() {
 	awk -v require_url="${2:-ready}" '
 	function check() {
 		if (!section) return
+		if (section == 2 && type == "") return
 		count++
+		if (section == 2 && type == "direct") bad=1
 		if (type != "mailru" && type != "yandex" && type != "direct") bad=1
 		if (require_url == "ready") {
 			if ((type == "mailru" || type == "yandex") && url !~ /^https:\/\/[^[:space:]]+$/) bad=1
@@ -14,14 +16,14 @@ or_transports_valid() {
 		}
 	}
 	/^[[:space:]]*\[/ {
-		check(); section=($0 ~ /^[[:space:]]*\[Transport[[:space:]]/)
+		check(); section=($0 ~ /^[[:space:]]*\[Transport[[:space:]]/ ? 1 : ($0 ~ /^[[:space:]]*\[Interface\]/ ? 2 : 0))
 		type=""; url=""; listen=""; next
 	}
-	section && /^[[:space:]]*(Type|URL|Listen)[[:space:]]*=/ {
+	section && /^[[:space:]]*(Type|Transport|URL|Listen)[[:space:]]*=/ {
 		key=$0; sub(/[[:space:]]*=.*/, "", key); sub(/^[[:space:]]*/, "", key)
 		value=$0; sub(/^[^=]*=[[:space:]]*/, "", value)
 		sub(/[[:space:]]*[#;].*$/, "", value); sub(/[[:space:]]*$/, "", value)
-		if (key == "Type") type=value
+		if (key == "Type" || key == "Transport") type=value
 		if (key == "URL") url=value
 		if (key == "Listen") listen=value
 	}

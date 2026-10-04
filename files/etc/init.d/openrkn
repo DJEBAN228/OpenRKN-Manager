@@ -32,7 +32,8 @@ start_service() {
     fw4 reload >/dev/null 2>&1 || { rm -f "$OR_RUN/desired"; return 1; }
 
     procd_open_instance openflux
-    procd_set_param command /usr/libexec/openrkn/runner openflux "$OR_FLUX" "--config=$OR_CONF" --role=exit --mode=l4 --negotiate --share
+    procd_set_param command /usr/libexec/openrkn/runner openflux "$OR_FLUX" "--config=$OR_CONF" --role=exit --mode=l4 --share
+    if [ "$OR_ENCRYPTION" = enabled ] && [ "$OR_SESSION" = strict ]; then procd_append_param command --negotiate; fi
     [ -z "$OR_SHARE_HOST" ] || procd_append_param command "--share-host=$OR_SHARE_HOST"
     procd_set_param user openrkn
     procd_set_param group openrkn

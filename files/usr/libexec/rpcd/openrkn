@@ -2,7 +2,7 @@
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 if [ "$1" = list ]; then
-	printf '%s\n' '{"status":{},"capabilities":{},"dpi_state":{},"get_config":{},"configure":{"transport":"","url":"","share_host":""},"start_service":{"service":"","mode":"","strategy":"","preset":""},"restart_service":{"service":"","mode":"","strategy":"","preset":""},"stop_service":{"service":""},"gen_mobile_profile":{},"get_logs":{"lines":100,"service":""}}'
+	printf '%s\n' '{"status":{},"check_connectivity":{},"capabilities":{},"dpi_state":{},"get_config":{},"configure":{"transport":"","url":"","share_host":"","codec":"","encryption":"","session_mode":"","encryption_key":""},"start_service":{"service":"","mode":"","strategy":"","preset":""},"restart_service":{"service":"","mode":"","strategy":"","preset":""},"stop_service":{"service":""},"gen_mobile_profile":{},"get_logs":{"lines":100,"service":""}}'
 	exit 0
 fi
 [ "$1" = call ] || exit 1
@@ -35,6 +35,7 @@ status() (
 	json_add_boolean running "$([ -n "$flux_pid" ] && echo 1 || echo 0)"
 	json_add_string transport "$(awk '
 		/^\[Transport/ {section=1;next} /^\[/ {section=0}
+		/^[[:space:]]*Transport[[:space:]]*=/ {sub(/^[^=]*=[[:space:]]*/, "");printf "%s",$0}
 		section && /^[[:space:]]*Type[[:space:]]*=/ {sub(/^[^=]*=[[:space:]]*/, "");sub(/[[:space:]]*[#;].*$/, "");printf "%s%s",sep,$0;sep=", "}' "$OR_CONF" 2>/dev/null)"
 	json_close_object
 	json_add_object processes
@@ -56,7 +57,7 @@ status() (
 )
 
 capabilities() {
-	printf '%s\n' '{"ok":true,"api_version":3,"service_scope":"openflux","dpi_mode":"external","modes":["hybrid"],"features":["status","dpi_state","get_config","configure","start_service","stop_service","restart_service","gen_mobile_profile","get_logs"],"unsupported":["managed_nfqws","sessions","kick_session","autotest","cores","tg_proxies","clients","set_client_profile","diag_check","traceroute"]}'
+	printf '%s\n' '{"ok":true,"api_version":4,"service_scope":"openflux","dpi_mode":"external","modes":["hybrid"],"features":["status","check_connectivity","dpi_state","get_config","configure","start_service","stop_service","restart_service","gen_mobile_profile","get_logs"],"unsupported":["managed_nfqws","sessions","kick_session","autotest","cores","tg_proxies","clients","set_client_profile","diag_check","traceroute"]}'
 }
 
 dpi_state() (
@@ -136,6 +137,7 @@ mutate() (
 
 case "$2" in
 	status) status;;
+	check_connectivity) . /usr/lib/openrkn/connectivity.sh; or_connectivity;;
 	capabilities) capabilities;;
 	get_config) . /usr/lib/openrkn/settings.sh; or_get_settings;;
 	configure) mutate configure;;

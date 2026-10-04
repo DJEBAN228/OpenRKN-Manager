@@ -21,7 +21,6 @@ json_get_var codec codec
 json_get_var negotiate negotiate
 json_get_var mode mode
 [ -z "$mode" ] || { or_error unsupported_share_mode; exit 0; }
-[ "$negotiate" = 1 ] || { or_error profile_requires_negotiated_session; exit 0; }
 # INI has no quoting/escaping: fail instead of silently corrupting values.
 ini_value() {
 	case "$1" in *'#'*|*';'*|*'
@@ -50,6 +49,10 @@ if [ -n "$secret" ]; then
 	printf '%s' "$secret" > "$key" || { or_error profile_storage_failed; exit 0; }
 fi
 json_select transports && json_get_keys indices || { or_error missing_transports; exit 0; }
+if [ "$negotiate" != 1 ]; then
+	set -- $indices
+	[ "$#" = 1 ] || { or_error classic_requires_single_transport; exit 0; }
+fi
 count=0
 for index in $indices; do
 	json_select "$index" || { or_error invalid_transport; exit 0; }
@@ -60,12 +63,17 @@ for index in $indices; do
 	json_get_var priority priority
 	[ -n "$name" ] || name=$type
 	case "$type" in direct|yandex|vyandex|boards|mailru) ;; *) or_error unknown_transport; exit 0;; esac
+	[ "$negotiate" = 1 ] || [ "$type" != direct ] || { or_error direct_requires_session; exit 0; }
 	case "$name" in ''|*[!A-Za-z0-9_.-]*) or_error invalid_transport_name; exit 0;; esac
 	ini_value "$url" && ini_value "$dial" || { or_error unrepresentable_ini_transport; exit 0; }
 	[ -n "$priority" ] || priority=50
 	case "$priority" in *[!0-9]*|'') or_error invalid_priority; exit 0;; esac
 	{
-		printf '\n[Transport %s]\nType = %s\nPriority = %s\n' "$name" "$type" "$priority"
+		if [ "$negotiate" = 1 ]; then
+			printf '\n[Transport %s]\nType = %s\nPriority = %s\n' "$name" "$type" "$priority"
+		else
+			printf 'Transport = %s\n' "$type"
+		fi
 		[ -z "$url" ] || printf 'URL = %s\n' "$url"
 		[ -z "$dial" ] || printf 'Dial = %s\n' "$dial"
 		:

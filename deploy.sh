@@ -17,7 +17,7 @@ fetch() {
 }
 check_sha() { printf '%s  %s\n' "$1" "$2" | sha256sum -c -; }
 echo '[1/6] Зависимости OpenWrt'
-packages='rpcd ubus uci libubox jshn uhttpd uhttpd-mod-ubus firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle'
+packages='rpcd ubus uci libubox jshn uhttpd uhttpd-mod-ubus firewall4 kmod-nft-queue kmod-nfnetlink-queue uclient-fetch ca-bundle'
 if command -v apk >/dev/null 2>&1; then apk update; apk add $packages
 elif command -v opkg >/dev/null 2>&1; then opkg update; opkg install $packages
 else echo 'Нет apk / opkg.' >&2; exit 1
@@ -45,14 +45,14 @@ grep -q '"code"' "$work/parser.json" || { echo 'Бинарник OpenFlux не �
 
 echo '[4/6] Установка бэкенда и оболочки'
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-if [ -f "$script_dir/files/www/openrkn/app.js" ] && [ "$(cat "$script_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.0 ]; then source_dir=$script_dir
+if [ -f "$script_dir/files/www/openrkn/app.js" ] && [ "$(cat "$script_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.1 ]; then source_dir=$script_dir
 else
     fetch 'https://github.com/DJEBAN228/OpenRKN-Manager/archive/refs/heads/main.tar.gz' "$work/source.tar.gz"
     tar -xzf "$work/source.tar.gz" -C "$work"
     source_dir="$work/OpenRKN-Manager-main"
 fi
 [ -f "$source_dir/files/www/openrkn/app.js" ] || { echo 'Неполное дерево файлов OpenRKN.' >&2; exit 1; }
-[ "$(cat "$source_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.0 ] || { echo 'Версия файлов не совпадает с установщиком.' >&2; exit 1; }
+[ "$(cat "$source_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.1 ] || { echo 'Версия файлов не совпадает с установщиком.' >&2; exit 1; }
 [ ! -x /etc/init.d/openrkn ] || /etc/init.d/openrkn stop
 [ ! -f /etc/config/openrkn ] || cp /etc/config/openrkn "$work/config.saved"
 mkdir -p /opt/openrkn/bin /etc/openrkn/profiles /var/run/openrkn

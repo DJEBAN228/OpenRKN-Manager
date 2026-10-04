@@ -5,6 +5,7 @@
       "ubus": {
         "openrkn": [
           "status",
+          "check_connectivity",
           "get_logs",
           "capabilities",
           "dpi_state",
@@ -23,6 +24,7 @@
       "ubus": {
         "openrkn": [
           "status",
+          "check_connectivity",
           "get_logs",
           "capabilities",
           "dpi_state",

@@ -52,10 +52,14 @@
     flux: `${zapretNotice()}<div class="g"><div class="card glow m c5"><div class="ch"><h3>OpenFlux exit node</h3><span class="pill" id="fluxPill">—</span></div><p class="sub">Роутер принимает туннель телефона и открывает исходящие TCP/UDP-соединения в режиме L4.</p>${controls()}<div class="note">Для Mail.ru / Яндекс нужна доступная HTTPS-ссылка на документ. Сохраните её перед первым запуском.</div></div>
       <div class="card glow c7 wide"><div class="ch"><h3>Подключить телефон</h3></div><div class="two"><div><p class="sub">Запустите OpenFlux, получите профиль и отсканируйте QR в приложении OpenFlux.</p><div class="row mt"><button class="btn pri" id="generateProfile">${icon('qr')}Получить QR-профиль</button><button class="btn" id="downloadProfile" disabled>${icon('dl')}.conf + ключ (.zip)</button></div><p class="note" id="profileNote">Ссылка содержит ключ доступа. Передавайте её только своим устройствам.</p></div><div><div class="qr ph" id="profileQR">QR · ожидание</div><div class="uri" id="profileLink" title="Скопировать ссылку"></div></div></div></div></div>
       <div class="g"><div class="card c12"><div class="ch"><h3>Настройки подключения</h3></div><form id="settingsForm"><div class="settings-grid">
-        <label>Транспорт<select id="transport"><option value="mailru">Mail.ru Docs</option><option value="yandex">Yandex.Docs</option><option value="direct">Direct · публичный адрес</option></select></label>
+        <label>Метод / транспорт<select id="transport"><option value="mailru">Mail.ru Docs</option><option value="yandex">Yandex.Docs</option><option value="direct">Direct · публичный адрес</option></select></label>
         <label id="urlField">HTTPS-ссылка документа<input type="text" id="documentURL" placeholder="https://cloud.mail.ru/public/…"></label>
         <label id="hostField">Публичный IP или домен<input type="text" id="shareHost" placeholder="exit.example.org"></label>
-      </div><div class="row mt"><button class="btn pri" id="saveSettings">Сохранить настройки</button><small>Работающий сервис будет перезапущен.</small></div><div class="note" id="settingsNote">Загрузка настроек…</div></form></div></div>`,
+        <label>Шифрование<select id="encryption"><option value="enabled">Включено · рекомендуется</option><option value="disabled">Без шифрования</option></select></label>
+        <label>Кодек<select id="codec"><option value="batched">Batched · zstd</option><option value="legacy">Legacy · LZ4</option></select></label>
+        <label id="sessionField">Протокол<select id="sessionMode"><option value="compatible">Совместимость со старыми клиентами</option><option value="strict">Строгий сеансовый режим</option></select></label>
+        <label id="keyField">Свой ключ (необязательно)<input type="password" id="encryptionKey" autocomplete="new-password" minlength="16" maxlength="128" pattern="[A-Za-z0-9_-]{16,128}" title="16–128 латинских букв, цифр, символов _ или -" placeholder="Пусто — сохранить ключ роутера"></label>
+      </div><p class="note" id="cryptoNote"></p><div class="row mt"><button class="btn pri" id="saveSettings">Сохранить настройки</button><small>Работающий сервис будет перезапущен.</small></div><div class="note" id="settingsNote">Загрузка настроек…</div></form><div class="row mt"><button class="btn" id="checkInternet">Проверить интернет роутера</button></div><div class="note" id="internetResult">Доступ к LuCI подтверждает локальную связь. Работающий процесс OpenFlux ещё не подтверждает интернет в туннеле.</div></div></div>`,
     dpi: `${zapretNotice()}<div class="g"><div class="card glow c12"><div class="ch"><h3>Внешний Zapret</h3><span class="pill" id="nfqPill">—</span></div><dl class="kv"><dt>Установлен</dt><dd id="zapretInstalled">—</dd><dt>Настроен</dt><dd id="zapretConfigured">—</dd><dt>Правила исходящего трафика</dt><dd id="nfqRule">—</dd></dl><div class="note">Исходящие соединения L4-прокси проходят через правила Zapret в postrouting. Порты, списки доменов и исключения определяются вашей конфигурацией Zapret. Обнаружение правил не подтверждает успешный обход конкретного сайта.</div></div></div>`,
     diag: `<div class="g"><div class="card c12"><div class="ch"><h3>Журнал OpenRKN</h3><div class="r"><button class="btn sm" id="pauseLogs">Пауза</button><button class="btn sm" id="clearLogs">Очистить экран</button></div></div><div class="row" style="margin-bottom:12px"><select id="logService" style="width:190px"><option value="all">Все процессы</option><option value="openflux">OpenFlux</option><option value="nfqws">nfqws</option><option value="watchdog">Watchdog</option></select><input type="search" id="logSearch" placeholder="Фильтр строк…" style="flex:1"></div><div class="note" id="logNote">Последние 150 строк. Ссылки профилей и QR исключены из журнала.</div><pre id="log"></pre></div></div>`
   };
@@ -113,11 +117,12 @@
   }
   async function metadata() {
     const [caps, cfg] = await Promise.all([client.call('capabilities'), client.call('get_config')]);
-    if (caps.api_version !== 3) throw new Error('Обновите бэкенд OpenRKN до версии 0.3.0.');
+    if (caps.api_version !== 4) throw new Error('Обновите бэкенд OpenRKN до версии 0.3.1.');
     [canControl, canExport] = await Promise.all([client.allowed('configure'), client.allowed('gen_mobile_profile')]);
     settings = cfg;
     $('#transport').value = ['mailru', 'yandex', 'direct'].includes(cfg.transport) ? cfg.transport : 'mailru'; $('#documentURL').value = cfg.url || ''; $('#shareHost').value = cfg.share_host || '';
-    $('#settingsNote').textContent = canControl ? 'Секрет шифрования хранится на роутере и сохраняется при смене транспорта.' : 'Для изменения настроек нужны права openrkn-admin.';
+    $('#codec').value = cfg.codec || 'batched'; $('#encryption').value = cfg.encryption || 'enabled'; $('#sessionMode').value = cfg.session_mode || 'strict'; $('#encryptionKey').value = '';
+    $('#settingsNote').textContent = canControl ? 'После сохранения получите новый QR и импортируйте его на телефоне. Пустое поле ключа сохраняет существующий ключ.' : 'Для изменения настроек нужны права openrkn-admin.';
     transportFields(); setEnabled();
   }
   async function refresh() {
@@ -183,10 +188,31 @@
   };
   $('#qmClose').onclick = () => $('#qrModal').classList.remove('show');
   function transportFields() { const direct = $('#transport').value === 'direct'; $('#hostField').hidden = !direct; $('#urlField').hidden = direct; $('#documentURL').required = ['yandex', 'mailru'].includes($('#transport').value); $('#shareHost').required = direct; }
+  function cryptoFields() {
+    const direct = $('#transport').value === 'direct';
+    if (direct) { $('#encryption').value = 'enabled'; $('#codec').value = 'batched'; $('#sessionMode').value = 'strict'; }
+    const encrypted = $('#encryption').value === 'enabled';
+    $('#codec').querySelector('option[value="legacy"]').disabled = encrypted;
+    if (encrypted) $('#codec').value = 'batched';
+    $('#encryption').disabled = direct; $('#codec').disabled = direct; $('#sessionMode').disabled = direct;
+    $('#sessionField').hidden = !encrypted; $('#keyField').hidden = !encrypted;
+    $('#encryptionKey').disabled = !encrypted;
+    $('#cryptoNote').textContent = !encrypted ? 'Без шифрования нет защиты туннеля ключом. Доступны оба кодека. Старый ключ остаётся на роутере для повторного включения.' : 'Ключ: 16–128 символов A–Z, a–z, 0–9, _ или -. Для зашифрованного QR используйте batched. Совместимый режим принимает также старых клиентов; строгий требует сеансовый протокол. Direct требует публичного адреса и доступного TCP-порта 8443.';
+  }
+  const oldTransportFields = transportFields;
+  transportFields = () => { oldTransportFields(); cryptoFields(); };
   $('#transport').onchange = transportFields;
+  $('#encryption').onchange = cryptoFields;
+  $('#codec').onchange = cryptoFields;
+  $('#checkInternet').onclick = async () => {
+    $('#checkInternet').disabled = true; $('#internetResult').textContent = 'Проверка IP, DNS и HTTPS (до 9 секунд)…';
+    try { const r = await client.call('check_connectivity'); $('#internetResult').textContent = 'Роутер: IP (ping) ' + (r.ip_ping ? 'OK' : 'нет ответа') + ' · DNS ' + (r.dns_lookup ? 'OK' : 'ошибка') + ' · HTTPS ' + (r.https_fetch ? 'OK' : 'ошибка') + '. Если HTTPS работает, а на телефоне интернета нет — проверьте ссылку редактируемого документа, переимпортируйте новый QR и посмотрите журнал OpenFlux. Ping может блокироваться провайдером. Эта проверка не проходит через туннель телефона.'; }
+    catch (error) { $('#internetResult').textContent = error.message; }
+    finally { $('#checkInternet').disabled = false; }
+  };
   $('#settingsForm').onsubmit = async e => {
     e.preventDefault(); if (!canControl || busy) return; busy = true; setEnabled();
-    try { await client.call('configure', { transport: $('#transport').value, url: $('#documentURL').value.trim(), share_host: $('#shareHost').value.trim() }); clearProfile(); await metadata(); toast('Настройки сохранены.'); }
+    try { await client.call('configure', { transport: $('#transport').value, url: $('#documentURL').value.trim(), share_host: $('#shareHost').value.trim(), codec: $('#codec').value, encryption: $('#encryption').value, session_mode: $('#sessionMode').value, encryption_key: $('#encryption').value === 'enabled' ? $('#encryptionKey').value : '' }); clearProfile(); await metadata(); toast('Настройки сохранены. Импортируйте новый профиль на телефоне.'); }
     catch (error) { $('#settingsNote').textContent = error.message; toast(error.message, true); }
     finally { busy = false; await refresh(); }
   };

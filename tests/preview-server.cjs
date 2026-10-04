@@ -1,7 +1,7 @@
 // Development-only fake router. Never copied to the OpenWrt web root.
 const http = require('node:http'), fs = require('node:fs'), path = require('node:path'), zlib = require('node:zlib');
 const root = path.resolve(__dirname, '../files/www/openrkn');
-let running = true, settings = { transport: 'mailru', url: 'https://cloud.mail.ru/public/test-fixture/document', share_host: '', dpi_mode: 'external' };
+let running = true, settings = { transport: 'mailru', url: 'https://cloud.mail.ru/public/test-fixture/document', share_host: '', dpi_mode: 'external', codec: 'batched', encryption: 'enabled', session_mode: 'compatible' };
 const zapret = { mode: 'external', state: 'not_installed', installed: false, running: false, configured: false, postrouting_rules: false, manager_url: 'https://github.com/StressOzz/Zapret-Manager' };
 const fixtureLink = 'openflux://v1/' + zlib.deflateRawSync(Buffer.from(JSON.stringify({ negotiate: true, secret: 'fixture-secret', transports: [{ type: 'mailru', url: settings.url, priority: 100 }] }))).toString('base64url');
 const requests = [];
@@ -15,7 +15,8 @@ const server = http.createServer(async (req, res) => {
       else if (sid !== 'a'.repeat(32)) code = 6;
       else if (object === 'session') data = method === 'access' ? { access: true } : {};
       else switch (method) {
-        case 'capabilities': data = { ok: true, api_version: 3, service_scope: 'openflux' }; break;
+        case 'capabilities': data = { ok: true, api_version: 4, service_scope: 'openflux' }; break;
+        case 'check_connectivity': data = { ok: true, scope: 'router', ip_ping: true, dns_lookup: true, https_fetch: true }; break;
         case 'get_config': data = { ok: true, ...settings }; break;
         case 'status': data = { ok: true, state: running ? 'ONLINE' : 'STOPPED', desired: running, dpi_mode: 'external', zapret,
           model: 'OpenWrt x86_64 · test fixture', release: 'OpenWrt 25 · test fixture', uptime: 38591, load: [0.08, 0.12, 0.1],

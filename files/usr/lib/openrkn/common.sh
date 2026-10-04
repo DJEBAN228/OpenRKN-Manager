@@ -13,6 +13,9 @@ or_config() {
 	config_get OR_MODE main mode 'hybrid'
 	config_get OR_CONF main openflux_config /etc/openrkn/exit.conf
 	config_get OR_SHARE_HOST main share_host ''
+	config_get OR_CODEC main codec batched
+	config_get OR_ENCRYPTION main encryption enabled
+	config_get OR_SESSION main session_mode strict
 	config_get OR_PROFILE_TIMEOUT main profile_timeout 5
 	case "$OR_PROFILE_TIMEOUT" in ''|*[!0-9]*) OR_PROFILE_TIMEOUT=5;; esac
 	[ "${#OR_PROFILE_TIMEOUT}" -le 2 ] || OR_PROFILE_TIMEOUT=5

@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=openrkn
-PKG_VERSION:=0.3.0
+PKG_VERSION:=0.3.1
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 
@@ -11,7 +11,7 @@ define Package/openrkn
   SECTION:=net
   CATEGORY:=Network
   TITLE:=OpenRKN procd and rpcd backend
-  DEPENDS:=+rpcd +ubus +uci +libubox +jshn +uhttpd +uhttpd-mod-ubus +firewall4 +nftables-json +kmod-nft-queue +kmod-nfnetlink-queue
+  DEPENDS:=+rpcd +ubus +uci +libubox +jshn +uhttpd +uhttpd-mod-ubus +firewall4 +nftables-json +kmod-nft-queue +kmod-nfnetlink-queue +uclient-fetch +ca-bundle
   USERID:=openrkn=453:openrkn=453
 endef
 

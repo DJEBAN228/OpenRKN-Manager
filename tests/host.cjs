@@ -12,14 +12,14 @@ const run = (args, input = '') => {
   assert.equal(p.status, 0, p.stderr || `dash exit ${p.status}`);
   return p.stdout.trim();
 };
-for (const f of ['files/etc/init.d/openrkn', 'files/usr/lib/openrkn/common.sh', 'files/usr/lib/openrkn/zapret.sh', 'files/usr/lib/openrkn/settings.sh', 'files/usr/lib/openrkn/telemetry.sh', 'files/usr/lib/openrkn/transports.sh', 'files/etc/uci-defaults/90-openrkn-uhttpd', 'deploy.sh',
+for (const f of ['files/etc/init.d/openrkn', 'files/usr/lib/openrkn/common.sh', 'files/usr/lib/openrkn/zapret.sh', 'files/usr/lib/openrkn/settings.sh', 'files/usr/lib/openrkn/connectivity.sh', 'files/usr/lib/openrkn/telemetry.sh', 'files/usr/lib/openrkn/transports.sh', 'files/etc/uci-defaults/90-openrkn-uhttpd', 'deploy.sh',
   'files/usr/libexec/rpcd/openrkn', ...fs.readdirSync(path.join(root, 'files/usr/libexec/openrkn')).map(n => 'files/usr/libexec/openrkn/' + n)]) {
   assert(!fs.readFileSync(path.join(root, f)).includes(13), `CR in ${f}`);
   run(['-n', f]);
 }
 const rpc = fs.readFileSync(path.join(root, 'files/usr/libexec/rpcd/openrkn'), 'utf8');
 const list = JSON.parse(run(['files/usr/libexec/rpcd/openrkn', 'list']));
-assert.deepEqual(Object.keys(list).sort(), ['status', 'capabilities', 'dpi_state', 'get_config', 'configure', 'start_service', 'restart_service', 'stop_service', 'gen_mobile_profile', 'get_logs'].sort());
+assert.deepEqual(Object.keys(list).sort(), ['status', 'check_connectivity', 'capabilities', 'dpi_state', 'get_config', 'configure', 'start_service', 'restart_service', 'stop_service', 'gen_mobile_profile', 'get_logs'].sort());
 const acl = JSON.parse(fs.readFileSync(path.join(root, 'files/usr/share/rpcd/acl.d/openrkn.json')));
 assert(!acl['openrkn-read'].read.ubus.openrkn.includes('gen_mobile_profile'));
 assert(acl['openrkn-admin'].write.ubus.openrkn.includes('gen_mobile_profile'));
@@ -103,7 +103,7 @@ nft() { [ "$phase" != rules_missing ] || return 1; printf 'type filter hook post
   }
   const confDir = t + '/configuration';
   fs.mkdirSync(confDir);
-  fs.writeFileSync(confDir + '/secret.key', 'test-key');
+  fs.writeFileSync(confDir + '/secret.key', '0123456789abcdef0123456789abcdef');
   const settings = fs.readFileSync(path.join(root, 'files/usr/lib/openrkn/settings.sh'), 'utf8')
     .replaceAll('/etc/openrkn', confDir);
   fs.writeFileSync(path.join(temp, 'settings'), shim + `
@@ -112,7 +112,7 @@ chown() { :; }
 uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
 ` + settings + '\nor_settings\n');
   const configure = request => JSON.parse(run([t + '/settings'], JSON.stringify(request) + '\n'));
-  const mailru = { transport: 'mailru', url: 'https://docs.mail.ru/test-fixture?x=1&y=2', share_host: '', dpi_enabled: false };
+  const mailru = { session_mode: 'strict', transport: 'mailru', url: 'https://docs.mail.ru/test-fixture?x=1&y=2', share_host: '', dpi_enabled: false };
   assert.equal(configure(mailru).ok, true);
   assert(fs.readFileSync(confDir + '/exit.conf', 'utf8').includes('[Transport mailru]\nType = mailru\nPriority = 100\nURL = ' + mailru.url));
   assert(fs.readFileSync(t + '/uci.args', 'utf8').includes('openrkn.main.url=' + mailru.url));
@@ -121,12 +121,33 @@ uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
   assert.equal(configure({ ...mailru, url: "https://docs.mail.ru/x'\nRole = client" }).error, 'invalid_transport_settings');
   assert.equal(configure({ ...mailru, transport: 'unknown' }).error, 'unsupported_transport');
   assert.equal(configure({ ...mailru, transport: 'yandex', url: '' }).error, 'document_url_required');
+  assert.equal(configure({ ...mailru, encryption: 'disabled', codec: 'legacy' }).ok, true);
+  const plainExit = fs.readFileSync(confDir + '/exit.conf', 'utf8');
+  assert(plainExit.includes('Transport = mailru'));
+  assert(!plainExit.includes('EncryptionKeyFile'));
+  assert.equal(configure({ ...mailru, codec: 'legacy' }).error, 'legacy_requires_plain_profile');
+  assert.equal(configure({ ...mailru, encryption_key: 'too-short' }).error, 'invalid_encryption_key');
+  assert.equal(configure({ ...mailru, encryption_key: '0123456789abcdefNEWKEY' }).ok, true);
+  assert.equal(fs.readFileSync(confDir + '/secret.key', 'utf8').trim(), '0123456789abcdefNEWKEY');
+  assert.equal(configure({ ...mailru, transport: 'direct', share_host: 'example.com', encryption: 'disabled' }).error, 'direct_requires_encrypted_batched');
+  assert.equal(configure({ ...mailru, session_mode: 'compatible' }).ok, true);
+  assert(fs.readFileSync(confDir + '/exit.conf', 'utf8').includes('Transport = mailru'));
   const transportLibrary = slash(path.join(root, 'files/usr/lib/openrkn/transports.sh'));
   const checkTransport = (config, mode = 'ready') => {
     fs.writeFileSync(t + '/transport.conf', config);
     return run(['-c', `PATH=/usr/bin:/bin; export PATH; . ${shellQuote(transportLibrary)}; if or_transports_valid ${shellQuote(t + '/transport.conf')} ${shellQuote(mode)}; then printf yes; else printf no; fi`]);
   };
   const document = '[Transport document]\nType = mailru\n';
+  assert.equal(checkTransport(plainExit), 'yes');
+  const connectivity = fs.readFileSync(path.join(root, 'files/usr/lib/openrkn/connectivity.sh'), 'utf8').replaceAll('/tmp/openrkn-probe.', t + '/probe.');
+  fs.writeFileSync(t + '/probe-test', shim + '\ntimeout() { [ "$PROBE_FAIL" != 1 ]; }\n' + connectivity + '\nor_connectivity\n');
+  const goodProbe = JSON.parse(run([t + '/probe-test']));
+  assert.equal(goodProbe.scope, 'router');
+  assert.equal(goodProbe.https_fetch, true);
+  const failedProbe = JSON.parse(run(['-c', `PROBE_FAIL=1; export PROBE_FAIL; . ${shellQuote(t + '/probe-test')}`]));
+  assert.equal(failedProbe.ip_ping, false);
+  assert.equal(failedProbe.dns_lookup, false);
+  assert.equal(failedProbe.https_fetch, false);
   assert.equal(checkTransport(document), 'no', 'missing URL must prevent starting');
   assert.equal(checkTransport(document, 'supported'), 'yes', 'unfinished supported config must be preserved');
   assert.equal(checkTransport(document + 'URL = https://cloud.mail.ru/public/fixture/document\n'), 'yes');
@@ -176,7 +197,12 @@ uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
   assert.equal(exportProfile({ config: { ...fixture.config, transports: [{ type: 'direct', name: '../../escape', dial: 'x:1' }] } }).error, 'invalid_transport_name');
   assert.equal(fs.readdirSync(path.join(temp, 'profiles')).length, 1, 'failed export must clean up');
   assert.equal(exportProfile({ config: { ...fixture.config, context: '' } }).ok, true, 'empty context must not fail shell group');
-  assert.equal(exportProfile({ config: { ...fixture.config, negotiate: false } }).error, 'profile_requires_negotiated_session');
+  assert.equal(exportProfile({ config: { ...fixture.config, negotiate: false } }).error, 'direct_requires_session');
+  const plain = exportProfile({ config: { negotiate: false, codec: 'legacy', transports: [{ type: 'mailru', url: 'https://example.com/doc' }] } });
+  assert.equal(plain.ok, true);
+  assert(!plain.files['secret.key']);
+  assert(plain.config.includes('Transport = mailru'));
+  assert(!plain.config.includes('[Transport '));
   console.log('PASS: POSIX syntax, uhttpd permissions/index, external Zapret integration, RPC/ACL, logs, transports and profiles');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
