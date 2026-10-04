@@ -25,22 +25,22 @@ ARCH=$(uname -m)
 case "$ARCH" in
     x86_64|amd64)
         FLUX_BIN="openflux-linux-amd64"
-        ZAPRET_DIR="x86_64"
+        ZAPRET_DIR="linux-x86_64"
         ;;
     aarch64|arm64)
         echo "[!] Архитектура $ARCH: экспериментальная поддержка (тестировалось на x86_64)."
         FLUX_BIN="openflux-linux-arm64"
-        ZAPRET_DIR="aarch64"
+        ZAPRET_DIR="linux-arm64"
         ;;
     armv7l|arm)
         echo "[!] Архитектура $ARCH: экспериментальная поддержка (тестировалось на x86_64)."
         FLUX_BIN="openflux-linux-arm"
-        ZAPRET_DIR="arm"
+        ZAPRET_DIR="linux-arm"
         ;;
     *)
         echo "[!] Неизвестная архитектура: $ARCH. По умолчанию x86_64."
         FLUX_BIN="openflux-linux-amd64"
-        ZAPRET_DIR="x86_64"
+        ZAPRET_DIR="linux-x86_64"
         ;;
 esac
 
@@ -81,9 +81,21 @@ if [ ! -x /opt/openrkn/bin/nfqws ]; then
     echo "  -> Скачивание nfqws (zapret)..."
     fetch_url "https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz" /tmp/zapret.tar.gz
     tar -xzf /tmp/zapret.tar.gz -C /tmp
-    cp "/tmp/zapret-v72.13/binaries/$ZAPRET_DIR/nfqws" /opt/openrkn/bin/nfqws
-    chmod 755 /opt/openrkn/bin/nfqws
-    rm -rf /tmp/zapret.tar.gz /tmp/zapret-v72.13
+    NFQ_SRC="/tmp/zapret-v72.13/binaries/$ZAPRET_DIR/nfqws"
+    if [ ! -f "$NFQ_SRC" ]; then
+        NFQ_SRC=$(find /tmp/zapret-*/binaries -type f -name nfqws 2>/dev/null | grep "$ZAPRET_DIR" | head -n 1)
+    fi
+    if [ ! -f "$NFQ_SRC" ]; then
+        NFQ_SRC=$(find /tmp/zapret-*/binaries -type f -name nfqws 2>/dev/null | head -n 1)
+    fi
+    if [ -f "$NFQ_SRC" ]; then
+        cp "$NFQ_SRC" /opt/openrkn/bin/nfqws
+        chmod 755 /opt/openrkn/bin/nfqws
+    else
+        echo "[!] Ошибка: не удалось найти бинарник nfqws для $ZAPRET_DIR" >&2
+        exit 1
+    fi
+    rm -rf /tmp/zapret.tar.gz /tmp/zapret-*
 fi
 
 echo "[5/7] Копирование файлов пакета OpenRKN..."
