@@ -1,167 +1,104 @@
 #!/bin/sh
-set -e
-
-echo "=========================================================="
-echo "           УСТАНОВКА И РАЗВЕРТЫВАНИЕ OpenRKN              "
-echo "              OpenWrt 25 (x86_64 / ARM)                   "
-echo "=========================================================="
-
-fetch_url() {
-    url="$1"
-    dest="$2"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL -o "$dest" "$url"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -q -O "$dest" "$url"
-    elif command -v uclient-fetch >/dev/null 2>&1; then
-        uclient-fetch -q -O "$dest" "$url"
-    else
-        echo "[!] Ошибка: не найден инструмент скачивания (curl/wget/uclient-fetch)." >&2
-        return 1
+# OpenWrt x86_64 installer. All temporary files belong to this invocation.
+set -eu
+umask 077
+[ "$(id -u)" = 0 ] || { echo 'Запустите установщик от root.' >&2; exit 1; }
+[ -f /etc/openwrt_release ] && [ -x /sbin/uci ] || { echo 'Нужен OpenWrt с procd и firewall4.' >&2; exit 1; }
+[ "$(uname -m)" = x86_64 ] || { echo 'Эта сборка предназначена для OpenWrt x86_64.' >&2; exit 1; }
+work=$(mktemp -d /tmp/openrkn-install.XXXXXX)
+trap 'rm -rf "$work"' 0
+trap 'exit 1' INT TERM
+fetch() {
+    if command -v curl >/dev/null 2>&1; then curl -fSL --connect-timeout 15 --max-time 180 --retry 2 -o "$2" "$1"
+    elif command -v uclient-fetch >/dev/null 2>&1; then uclient-fetch -O "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then wget -O "$2" "$1"
+    else echo 'Нет curl, uclient-fetch или wget.' >&2; return 1
     fi
 }
+check_sha() { printf '%s  %s\n' "$1" "$2" | sha256sum -c -; }
+echo '[1/6] Зависимости OpenWrt'
+packages='rpcd ubus uci libubox jshn uhttpd uhttpd-mod-ubus firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle'
+if command -v apk >/dev/null 2>&1; then apk update; apk add $packages
+elif command -v opkg >/dev/null 2>&1; then opkg update; opkg install $packages
+else echo 'Нет apk / opkg.' >&2; exit 1
+fi
+for tool in ubus uci fw4 nft jshn sha256sum; do command -v "$tool" >/dev/null 2>&1 || { echo "Не установлен $tool" >&2; exit 1; }; done
 
-ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64|amd64)
-        FLUX_BIN="openflux-linux-amd64"
-        ZAPRET_DIR="linux-x86_64"
-        ;;
-    aarch64|arm64)
-        echo "[!] Архитектура $ARCH: экспериментальная поддержка (тестировалось на x86_64)."
-        FLUX_BIN="openflux-linux-arm64"
-        ZAPRET_DIR="linux-arm64"
-        ;;
-    armv7l|arm)
-        echo "[!] Архитектура $ARCH: экспериментальная поддержка (тестировалось на x86_64)."
-        FLUX_BIN="openflux-linux-arm"
-        ZAPRET_DIR="linux-arm"
-        ;;
-    *)
-        echo "[!] Неизвестная архитектура: $ARCH. По умолчанию x86_64."
-        FLUX_BIN="openflux-linux-amd64"
-        ZAPRET_DIR="linux-x86_64"
-        ;;
-esac
+echo '[2/6] Системный пользователь'
+if ! grep -q '^openrkn:' /etc/group; then
+    ! awk -F: '$3==453 {found=1} END {exit !found}' /etc/group || { echo 'GID 453 уже занят.' >&2; exit 1; }
+    printf 'openrkn:x:453:\n' >> /etc/group
+fi
+if ! id openrkn >/dev/null 2>&1; then
+    ! awk -F: '$3==453 {found=1} END {exit !found}' /etc/passwd || { echo 'UID 453 уже занят.' >&2; exit 1; }
+    printf 'openrkn:x:453:453:OpenRKN:/var/run/openrkn:/bin/false\n' >> /etc/passwd
+fi
+[ "$(id -u openrkn)" = 453 ] && [ "$(id -g openrkn)" = 453 ] || { echo 'openrkn должен иметь UID/GID 453.' >&2; exit 1; }
 
-echo "[1/7] Проверка и установка пакетов..."
-if command -v apk >/dev/null 2>&1; then
-    echo "  -> Обнаружен apk (OpenWrt 24.10+ / 25.x)..."
-    apk update 2>/dev/null || true
-    apk add rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle curl tar gzip 2>/dev/null || \
-    apk add rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-certificates curl tar gzip 2>/dev/null || true
-elif command -v opkg >/dev/null 2>&1; then
-    echo "  -> Обнаружен opkg (OpenWrt legacy)..."
-    opkg update 2>/dev/null || true
-    opkg install rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle curl tar gzip coreutils-od 2>/dev/null || true
-elif command -v apt-get >/dev/null 2>&1; then
-    echo "  -> Обнаружен apt (Debian/Ubuntu/Armbian)..."
-    apt-get update -y 2>/dev/null || true
-    apt-get install -y curl tar gzip ca-certificates 2>/dev/null || true
+echo '[3/6] Официальные бинарники (с проверкой SHA256)'
+fetch 'https://github.com/p1neappleXpress/OpenFlux/releases/download/v0.3.0/openflux-linux-amd64' "$work/openflux"
+check_sha fdc30ccd12f65bc88db080da600a5fb2e5bbb22fe886648b67583ed77282c622 "$work/openflux"
+fetch 'https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz' "$work/zapret.tar.gz"
+check_sha 25c74e6c5f48963fa244c2955e76694a07c39447245a0457e2efdc74b3317e68 "$work/zapret.tar.gz"
+tar -xzf "$work/zapret.tar.gz" -C "$work"
+[ -f "$work/zapret-v72.13/binaries/linux-x86_64/nfqws" ] || { echo 'В архиве отсутствует nfqws x86_64.' >&2; exit 1; }
+chmod 755 "$work/openflux"
+# This is an offline parser probe, not a second exit node.
+printf 'not-a-link\n' | "$work/openflux" --parse-link - > "$work/parser.json" 2>/dev/null || :
+grep -q '"code"' "$work/parser.json" || { echo 'Бинарник OpenFlux не запускается / отсутствует --parse-link.' >&2; exit 1; }
+
+echo '[4/6] Установка бэкенда и оболочки'
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -f "$script_dir/files/www/openrkn/app.js" ]; then source_dir=$script_dir
 else
-    echo "  -> Пакетный менеджер не найден или пакеты встроены в прошивку, продолжаем..."
+    fetch 'https://github.com/DJEBAN228/OpenRKN-Manager/archive/refs/heads/main.tar.gz' "$work/source.tar.gz"
+    tar -xzf "$work/source.tar.gz" -C "$work"
+    source_dir="$work/OpenRKN-Manager-main"
 fi
-
-echo "[2/7] Создание системного пользователя openrkn (UID 453)..."
-grep -q '^openrkn:' /etc/passwd 2>/dev/null || echo 'openrkn:x:453:453:openrkn:/var/run/openrkn:/bin/false' >> /etc/passwd 2>/dev/null || true
-grep -q '^openrkn:' /etc/group 2>/dev/null || echo 'openrkn:x:453:' >> /etc/group 2>/dev/null || true
-
-echo "[3/7] Подготовка каталогов..."
-mkdir -p /opt/openrkn/bin /etc/openrkn /etc/openrkn/profiles /var/run/openrkn /www/openrkn
-chown -R openrkn:openrkn /var/run/openrkn /etc/openrkn/profiles 2>/dev/null || true
-
-echo "[4/7] Загрузка бинарников openflux и zapret ($ARCH)..."
-if [ ! -x /opt/openrkn/bin/openflux ]; then
-    echo "  -> Скачивание openflux ($FLUX_BIN)..."
-    fetch_url "https://github.com/p1neappleXpress/OpenFlux/releases/download/v0.3.0/$FLUX_BIN" /opt/openrkn/bin/openflux
-    chmod 755 /opt/openrkn/bin/openflux
-fi
-
-if [ ! -x /opt/openrkn/bin/nfqws ]; then
-    echo "  -> Скачивание nfqws (zapret)..."
-    fetch_url "https://github.com/bol-van/zapret/releases/download/v72.13/zapret-v72.13.tar.gz" /tmp/zapret.tar.gz
-    tar -xzf /tmp/zapret.tar.gz -C /tmp
-    NFQ_SRC="/tmp/zapret-v72.13/binaries/$ZAPRET_DIR/nfqws"
-    if [ ! -f "$NFQ_SRC" ]; then
-        NFQ_SRC=$(find /tmp/zapret-*/binaries -type f -name nfqws 2>/dev/null | grep "$ZAPRET_DIR" | head -n 1)
+[ -f "$source_dir/files/www/openrkn/app.js" ] || { echo 'Неполное дерево файлов OpenRKN.' >&2; exit 1; }
+[ ! -x /etc/init.d/openrkn ] || /etc/init.d/openrkn stop
+[ ! -f /etc/config/openrkn ] || cp /etc/config/openrkn "$work/config.saved"
+mkdir -p /opt/openrkn/bin /etc/openrkn/profiles /var/run/openrkn
+cp -R "$source_dir/files/"* /
+[ ! -f "$work/config.saved" ] || cp "$work/config.saved" /etc/config/openrkn
+cp "$work/openflux" /opt/openrkn/bin/openflux
+cp "$work/zapret-v72.13/binaries/linux-x86_64/nfqws" /opt/openrkn/bin/nfqws
+chmod 755 /opt/openrkn/bin/* /etc/init.d/openrkn /usr/libexec/rpcd/openrkn /usr/libexec/openrkn/* /etc/uci-defaults/90-openrkn-uhttpd
+if [ ! -s /etc/openrkn/secret.key ]; then
+    if command -v od >/dev/null 2>&1; then head -c 32 /dev/urandom | od -An -v -tx1 | tr -d ' \n' > /etc/openrkn/secret.key
+    else head -c 32 /dev/urandom | hexdump -v -e '1/1 "%02x"' > /etc/openrkn/secret.key
     fi
-    if [ ! -f "$NFQ_SRC" ]; then
-        NFQ_SRC=$(find /tmp/zapret-*/binaries -type f -name nfqws 2>/dev/null | head -n 1)
-    fi
-    if [ -f "$NFQ_SRC" ]; then
-        cp "$NFQ_SRC" /opt/openrkn/bin/nfqws
-        chmod 755 /opt/openrkn/bin/nfqws
-    else
-        echo "[!] Ошибка: не удалось найти бинарник nfqws для $ZAPRET_DIR" >&2
-        exit 1
-    fi
-    rm -rf /tmp/zapret.tar.gz /tmp/zapret-*
+    [ "$(wc -c < /etc/openrkn/secret.key)" = 64 ] || { echo 'Ошибка генерации ключа.' >&2; exit 1; }
 fi
-
-echo "[5/7] Копирование файлов пакета OpenRKN..."
-SCRIPT_DIR=$(dirname "$0")
-if [ -d "$SCRIPT_DIR/files" ]; then
-    cp -r "$SCRIPT_DIR/files"/* /
-else
-    echo "  -> Скачивание дерева файлов пакета из GitHub..."
-    fetch_url "https://raw.githubusercontent.com/DJEBAN228/OpenRKN-Manager/main/openrkn-deploy.tar.gz" /tmp/openrkn-deploy.tar.gz
-    tar -xzf /tmp/openrkn-deploy.tar.gz -C /tmp
-    cp -r /tmp/files/* /
-    rm -rf /tmp/openrkn-deploy.tar.gz /tmp/files
+# Repair earlier empty Yandex configurations; retain an administrator's valid config.
+if [ ! -s /etc/openrkn/exit.conf ] || { grep -q '^Type = yandex$' /etc/openrkn/exit.conf && ! grep -q '^URL = https://' /etc/openrkn/exit.conf; }; then
+    [ ! -f /etc/openrkn/exit.conf ] || cp /etc/openrkn/exit.conf /etc/openrkn/exit.conf.previous
+    cp /etc/openrkn/exit.conf.example /etc/openrkn/exit.conf
+    uci set openrkn.main.transport=cupsonline
+    uci set openrkn.main.url=''
 fi
+uci set openrkn.main.mode=hybrid
+uci -q get openrkn.main.dpi_enabled >/dev/null || uci set openrkn.main.dpi_enabled=0
+uci set openrkn.main.enabled=1
+uci commit openrkn
+chown root:openrkn /etc/openrkn /etc/openrkn/secret.key /etc/openrkn/exit.conf
+chmod 750 /etc/openrkn
+chmod 640 /etc/openrkn/secret.key /etc/openrkn/exit.conf
+chown root:root /etc/openrkn/profiles
+chmod 700 /etc/openrkn/profiles
+chown openrkn:openrkn /var/run/openrkn
+chmod 700 /var/run/openrkn
 
-chmod 755 /etc/init.d/openrkn /usr/libexec/rpcd/openrkn /usr/libexec/openrkn/* 2>/dev/null || true
+echo '[5/6] uhttpd /ubus и rpcd'
+sh /etc/uci-defaults/90-openrkn-uhttpd
+/etc/init.d/rpcd restart
+/etc/init.d/uhttpd restart
+fw4 check
 
-# Генерация ключа шифрования если отсутствует
-if [ ! -f /etc/openrkn/secret.key ]; then
-    echo "  -> Генерация ключа шифрования AES-256..."
-    if command -v od >/dev/null 2>&1; then
-        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/openrkn/secret.key
-    elif command -v hexdump >/dev/null 2>&1; then
-        head -c 32 /dev/urandom | hexdump -v -e '1/1 "%02x"' > /etc/openrkn/secret.key
-    else
-        head -c 32 /dev/urandom | tr -dc 'a-f0-9' | head -c 64 > /etc/openrkn/secret.key
-    fi
-    chmod 600 /etc/openrkn/secret.key
-fi
-
-# Дефолтный exit.conf
-if [ ! -f /etc/openrkn/exit.conf ]; then
-    cp /etc/openrkn/exit.conf.example /etc/openrkn/exit.conf 2>/dev/null || true
-fi
-
-echo "[6/7] Настройка веб-сервера..."
-if command -v uci >/dev/null 2>&1; then
-    uci -q get uhttpd.openrkn >/dev/null || {
-        uci set uhttpd.openrkn=uhttpd
-        uci set uhttpd.openrkn.listen_http='0.0.0.0:7788'
-        uci set uhttpd.openrkn.home='/www'
-        uci set uhttpd.openrkn.cgi_prefix='/cgi-bin'
-        uci commit uhttpd
-        [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd restart 2>/dev/null || true
-    }
-fi
-
-echo "[7/7] Запуск служб..."
-[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd restart 2>/dev/null || true
-if command -v fw4 >/dev/null 2>&1; then
-    fw4 reload 2>/dev/null || true
-fi
-if [ -x /etc/init.d/openrkn ]; then
-    /etc/init.d/openrkn enable 2>/dev/null || true
-    /etc/init.d/openrkn restart 2>/dev/null || true
-fi
-
-LAN_IP="192.168.1.1"
-if command -v uci >/dev/null 2>&1; then
-    LAN_IP=$(uci -q get network.lan.ipaddr || echo "192.168.1.1")
-fi
-
-echo ""
-echo "=========================================================="
-echo "             OpenRKN УСПЕШНО РАЗВЕРНУТ!                   "
-echo "=========================================================="
-echo "  Панель управления доступна:"
-echo "  👉 http://$LAN_IP/openrkn/       (основной порт LuCI 80)"
-echo "  👉 http://$LAN_IP:7788/openrkn/  (выделенный порт OpenRKN)"
-echo "=========================================================="
+echo '[6/6] Автозапуск OpenFlux'
+/etc/init.d/openrkn enable
+/etc/init.d/openrkn start
+lan_ip=$(uci -q get network.lan.ipaddr || :)
+echo "Готово. Откройте http://${lan_ip:-192.168.1.1}:7788/openrkn/"
+echo 'Войдите под root с паролем OpenWrt → OpenFlux → Получить QR-профиль.'
+echo 'Ссылка появляется после создания комнат; это может занять некоторое время.'

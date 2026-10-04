@@ -1,0 +1,6 @@
+.host-test-*/
+.cache/
+node_modules/
+*.key
+*.link
+*.previous

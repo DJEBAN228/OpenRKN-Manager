@@ -1,9 +1,18 @@
 #!/bin/sh
-uci -q get uhttpd.openrkn && exit 0
-uci set uhttpd.openrkn=uhttpd
-uci set uhttpd.openrkn.listen_http='0.0.0.0:7788'
+set -e
+uci -q get uhttpd.openrkn >/dev/null || {
+	uci set uhttpd.openrkn=uhttpd
+	uci add_list uhttpd.openrkn.listen_http='0.0.0.0:7788'
+}
 uci set uhttpd.openrkn.home='/www'
 uci set uhttpd.openrkn.cgi_prefix='/cgi-bin'
+uci set uhttpd.openrkn.ubus_prefix='/ubus'
+uci set uhttpd.openrkn.ubus_socket='/var/run/ubus/ubus.sock'
+uci set uhttpd.openrkn.no_ubusauth='0'
+uci set uhttpd.openrkn.rfc1918_filter='1'
+uci set uhttpd.openrkn.no_dirlists='1'
+uci set uhttpd.openrkn.script_timeout='60'
+uci set uhttpd.openrkn.network_timeout='60'
+uci -q get uhttpd.main >/dev/null && uci set uhttpd.main.ubus_prefix='/ubus'
 uci commit uhttpd
-/etc/init.d/uhttpd restart 2>/dev/null || true
 exit 0

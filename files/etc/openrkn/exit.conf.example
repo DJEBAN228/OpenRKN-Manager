@@ -1,16 +1,10 @@
 [Interface]
 Role = exit
 Mode = l4
-Negotiate = true
 EncryptionKeyFile = /etc/openrkn/secret.key
 SessionContext = openrkn-v1
 CookieStore = /var/run/openrkn/cookies.json
 
-[Transport yandex]
-Type = yandex
+[Transport cupsonline]
+Type = cupsonline
 Priority = 100
-
-[Transport direct]
-Type = direct
-Priority = 50
-Listen = 0.0.0.0:8443

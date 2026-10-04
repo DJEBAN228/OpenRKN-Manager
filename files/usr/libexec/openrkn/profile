@@ -88,6 +88,11 @@ json_add_string path "$conf"
 json_add_string config "$(cat "$conf")"
 json_add_string conf "$(cat "$conf")"
 json_add_string name "openflux-mobile.conf"
+json_add_object files
+json_add_string 'mobile.conf' "$(awk '/^EncryptionKeyFile[[:space:]]*=/ {print "EncryptionKeyFile = secret.key";next} {print}' "$conf")"
+[ -z "$secret" ] || json_add_string 'secret.key' "$secret"
+json_add_string 'share.link' "$link"
+json_close_object
 # Clients should import the link; CLI users copy the whole directory and update
 # EncryptionKeyFile to its destination path. No key is returned separately.
 json_dump

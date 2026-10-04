@@ -12,14 +12,14 @@ const run = (args, input = '') => {
   assert.equal(p.status, 0, p.stderr || `dash exit ${p.status}`);
   return p.stdout.trim();
 };
-for (const f of ['files/etc/init.d/openrkn', 'files/usr/lib/openrkn/common.sh',
+for (const f of ['files/etc/init.d/openrkn', 'files/usr/lib/openrkn/common.sh', 'files/usr/lib/openrkn/presets.sh', 'files/usr/lib/openrkn/settings.sh', 'files/usr/lib/openrkn/telemetry.sh', 'files/etc/uci-defaults/90-openrkn-uhttpd', 'deploy.sh',
   'files/usr/libexec/rpcd/openrkn', ...fs.readdirSync(path.join(root, 'files/usr/libexec/openrkn')).map(n => 'files/usr/libexec/openrkn/' + n)]) {
   assert(!fs.readFileSync(path.join(root, f)).includes(13), `CR in ${f}`);
   run(['-n', f]);
 }
 const rpc = fs.readFileSync(path.join(root, 'files/usr/libexec/rpcd/openrkn'), 'utf8');
 const list = JSON.parse(run(['files/usr/libexec/rpcd/openrkn', 'list']));
-assert.deepEqual(Object.keys(list).sort(), ['status', 'start_service', 'stop_service', 'gen_mobile_profile', 'get_logs'].sort());
+assert.deepEqual(Object.keys(list).sort(), ['status', 'capabilities', 'dpi_state', 'get_config', 'configure', 'start_service', 'restart_service', 'stop_service', 'gen_mobile_profile', 'get_logs'].sort());
 const acl = JSON.parse(fs.readFileSync(path.join(root, 'files/usr/share/rpcd/acl.d/openrkn.json')));
 assert(!acl['openrkn-read'].read.ubus.openrkn.includes('gen_mobile_profile'));
 assert(acl['openrkn-admin'].write.ubus.openrkn.includes('gen_mobile_profile'));
@@ -32,7 +32,7 @@ const shim = `
 PATH=/usr/bin:/bin
 export PATH
 jshim() { printf '%s\\n%s\\n%s\\n%s\\n%s' "$1" "$2" "$3" "$4" "$5" | ${node} ${helper}; }
-json_init() { JOUT='{}'; }
+json_init() { JOUT='{}'; OPATH=; }
 json_load() { JIN=$1; JPATH=; jshim load "$JIN"; }
 json_select() {
   if [ "$1" = .. ]; then JPATH=\${JPATH%/*}; return; fi
@@ -42,9 +42,11 @@ json_select() {
 json_get_var() { jvalue=$(jshim get "$JIN" "$JPATH" "$2"); eval "$1=\\$jvalue"; }
 json_get_type() { jvalue=$(jshim type "$JIN" "$JPATH" "$2"); eval "$1=\\$jvalue"; }
 json_get_keys() { jvalue=$(jshim keys "$JIN" "$JPATH"); eval "$1=\\$jvalue"; }
-json_add_string() { JOUT=$(jshim add-string "$JOUT" '' "$1" "$2"); }
-json_add_int() { JOUT=$(jshim add-int "$JOUT" '' "$1" "$2"); }
-json_add_boolean() { JOUT=$(jshim add-boolean "$JOUT" '' "$1" "$2"); }
+json_add_string() { JOUT=$(jshim add-string "$JOUT" "$OPATH" "$1" "$2"); }
+json_add_int() { JOUT=$(jshim add-int "$JOUT" "$OPATH" "$1" "$2"); }
+json_add_boolean() { JOUT=$(jshim add-boolean "$JOUT" "$OPATH" "$1" "$2"); }
+json_add_object() { JOUT=$(jshim add-object "$JOUT" "$OPATH" "$1"); OPATH="$OPATH/$1"; }
+json_close_object() { OPATH=\${OPATH%/*}; }
 json_dump() { printf '%s\\n' "$JOUT"; }
 or_error() { json_init; json_add_boolean ok 0; json_add_string error "$1"; json_dump; }
 OR_LOG=${shellQuote(t + '/log')}
@@ -56,6 +58,26 @@ or_config() { OR_PROFILE_TIMEOUT=1; }
 try {
   fs.mkdirSync(path.join(temp, 'run'));
   fs.mkdirSync(path.join(temp, 'profiles'));
+  const confDir = t + '/configuration';
+  fs.mkdirSync(confDir);
+  fs.writeFileSync(confDir + '/secret.key', 'test-key');
+  const settings = fs.readFileSync(path.join(root, 'files/usr/lib/openrkn/settings.sh'), 'utf8')
+    .replaceAll('/etc/openrkn', confDir);
+  fs.writeFileSync(path.join(temp, 'settings'), shim + `
+or_config() { OR_CONF=${shellQuote(confDir + '/exit.conf')}; }
+chown() { :; }
+uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
+` + settings + '\nor_settings\n');
+  const configure = request => JSON.parse(run([t + '/settings'], JSON.stringify(request) + '\n'));
+  const mailru = { transport: 'mailru', url: 'https://docs.mail.ru/test-fixture?x=1&y=2', share_host: '', dpi_enabled: false };
+  assert.equal(configure(mailru).ok, true);
+  assert(fs.readFileSync(confDir + '/exit.conf', 'utf8').includes('[Transport mailru]\nType = mailru\nPriority = 100\nURL = ' + mailru.url));
+  assert(fs.readFileSync(t + '/uci.args', 'utf8').includes('openrkn.main.url=' + mailru.url));
+  assert.equal(configure({ ...mailru, url: '' }).error, 'document_url_required');
+  assert.equal(configure({ ...mailru, url: 'http://docs.mail.ru/x' }).error, 'document_url_required');
+  assert.equal(configure({ ...mailru, url: "https://docs.mail.ru/x'\nRole = client" }).error, 'invalid_transport_settings');
+  assert.equal(configure({ ...mailru, transport: 'unknown' }).error, 'unsupported_transport');
+  assert.equal(configure({ ...mailru, transport: 'cupsonline', url: '' }).ok, true);
   const rpcMock = rpc.replace('. /usr/lib/openrkn/common.sh', shim);
   fs.writeFileSync(path.join(temp, 'rpc'), rpcMock);
   const invoke = req => JSON.parse(run([t + '/rpc', 'call', 'get_logs'], req + '\n'));
@@ -86,6 +108,8 @@ try {
   };
   const result = exportProfile(fixture);
   assert.equal(result.ok, true);
+  assert.equal(result.files['secret.key'], fixture.config.secret);
+  assert(result.files['mobile.conf'].includes('EncryptionKeyFile = secret.key'));
   assert(result.config.includes('Role = client'));
   assert(result.config.includes('Dial = exit.example.org:8443'));
   assert(result.config.includes('SessionContext = openrkn-v1'));

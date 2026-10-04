@@ -20,9 +20,10 @@ try {
       process.stdout.write(v === undefined ? '' : typeof v === 'number' ? (Number.isInteger(v) ? 'int' : 'double') : typeof v);
       break;
     }
-    case 'add-string': data[key] = value; process.stdout.write(JSON.stringify(data)); break;
-    case 'add-int': data[key] = Number(value); process.stdout.write(JSON.stringify(data)); break;
-    case 'add-boolean': data[key] = value === '1'; process.stdout.write(JSON.stringify(data)); break;
+    case 'add-object': selected[key] = {}; process.stdout.write(JSON.stringify(data)); break;
+    case 'add-string': selected[key] = value; process.stdout.write(JSON.stringify(data)); break;
+    case 'add-int': selected[key] = Number(value); process.stdout.write(JSON.stringify(data)); break;
+    case 'add-boolean': selected[key] = value === '1'; process.stdout.write(JSON.stringify(data)); break;
     default: throw Error(op);
   }
 } catch { process.exit(1); }

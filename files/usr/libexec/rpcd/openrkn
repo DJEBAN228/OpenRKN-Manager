@@ -2,7 +2,7 @@
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 if [ "$1" = list ]; then
-	printf '%s\n' '{"status":{},"start_service":{},"stop_service":{},"gen_mobile_profile":{},"get_logs":{"lines":100}}'
+	printf '%s\n' '{"status":{},"capabilities":{},"dpi_state":{},"get_config":{},"configure":{"transport":"","url":"","share_host":"","dpi_enabled":true},"start_service":{"service":"","mode":"","strategy":"","preset":""},"restart_service":{"service":"","mode":"","strategy":"","preset":""},"stop_service":{"service":""},"gen_mobile_profile":{},"get_logs":{"lines":100,"service":""}}'
 	exit 0
 fi
 [ "$1" = call ] || exit 1
@@ -12,79 +12,31 @@ umask 077
 status() (
 	or_config
 	services=$(or_service_json)
-	first=$(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $5+$6; exit}' /proc/stat 2>/dev/null)
-	sleep 1
-	second=$(awk '/^cpu / {print $2+$3+$4+$5+$6+$7+$8+$9, $5+$6; exit}' /proc/stat 2>/dev/null)
-	busy=$(printf '%s\n%s\n' "$first" "$second" | awk 'NR==1 {t=$1;i=$2} NR==2 {d=$1-t; if(d>0) printf "%.0f", 100*(d-($2-i))/d; else print 0}')
-	busy_int=${busy:-0}
-	ram=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print t+0,a+0,t-a}' /proc/meminfo 2>/dev/null)
-	set -- $ram
-	tot_kib=${1:-0}
-	avail_kib=${2:-0}
-	used_kib=${3:-0}
-	uptime_s=$(awk '{print int($1)}' /proc/uptime 2>/dev/null || echo 0)
-
-	nfq_pid=$(or_pid nfqws "$OR_NFQ")
 	flux_pid=$(or_pid openflux "$OR_FLUX")
-	nfq_run=$([ -n "$nfq_pid" ] && echo 1 || echo 0)
-	flux_run=$([ -n "$flux_pid" ] && echo 1 || echo 0)
-
+	nfq_pid=$(or_pid nfqws "$OR_NFQ")
 	json_init
 	json_add_boolean ok 1
 	json_add_boolean desired "$([ -f "$OR_RUN/desired" ] && echo 1 || echo 0)"
-	json_add_string board "$([ -f /tmp/sysinfo/board_name ] && cat /tmp/sysinfo/board_name || echo 'Generic x86_64')"
-	json_add_string model "$([ -f /tmp/sysinfo/model ] && cat /tmp/sysinfo/model || echo 'x86_64 Processor')"
-	json_add_string release "$([ -f /etc/openwrt_release ] && . /etc/openwrt_release && echo "$DISTRIB_DESCRIPTION" || echo 'OpenWrt 25')"
-	json_add_string kernel "$(uname -r 2>/dev/null || echo '6.12 x86_64')"
-	json_add_int uptime "${uptime_s:-0}"
 	json_add_string mode "$OR_MODE"
 	json_add_string strategy "$OR_STRATEGY"
-
-	json_add_object cpu
-	json_add_int total "$busy_int"
-	json_add_int usage_percent "$busy_int"
-	json_add_int sample_seconds 1
-	json_add_array cores
-	json_add_int "" "$busy_int"
-	json_add_int "" "$busy_int"
-	json_add_int "" "$busy_int"
-	json_add_int "" "$busy_int"
-	json_close_array
-	json_close_object
-
-	json_add_object ram
-	json_add_int total_kib "$tot_kib"
-	json_add_int available_kib "$avail_kib"
-	json_add_int used_kib "$used_kib"
-	json_close_object
-
-	json_add_object mem
-	json_add_int total "$((tot_kib * 1024))"
-	json_add_int free "$((avail_kib * 1024))"
-	json_add_int cached 0
-	json_add_int buffered 0
-	json_close_object
-
+	json_add_boolean dpi_enabled "$OR_DPI_ENABLED"
+	json_add_string state "$([ -n "$flux_pid" ] && { [ "$OR_DPI_ENABLED" = 0 ] || [ -n "$nfq_pid" ]; } && echo ONLINE || { [ -f "$OR_RUN/desired" ] && echo DEGRADED || echo STOPPED; })"
+	. /usr/lib/openrkn/telemetry.sh
+	or_telemetry
 	json_add_object services
-	json_add_object zapret
-	json_add_boolean running "$nfq_run"
+	for name in openflux zapret; do
+		case "$name" in openflux) pid=$flux_pid;; zapret) pid=$nfq_pid;; esac
+		json_add_object "$name"
+		json_add_boolean running "$([ -n "$pid" ] && echo 1 || echo 0)"
+		json_close_object
+	done
 	json_close_object
 	json_add_object openflux
-	json_add_boolean running "$flux_run"
+	json_add_boolean running "$([ -n "$flux_pid" ] && echo 1 || echo 0)"
+	json_add_string transport "$(awk '
+		/^\[Transport/ {section=1;next} /^\[/ {section=0}
+		section && /^[[:space:]]*Type[[:space:]]*=/ {sub(/^[^=]*=[[:space:]]*/, "");sub(/[[:space:]]*[#;].*$/, "");printf "%s%s",sep,$0;sep=", "}' "$OR_CONF" 2>/dev/null)"
 	json_close_object
-	json_close_object
-
-	json_add_object zapret
-	json_add_boolean running "$nfq_run"
-	json_add_string strategy "$OR_STRATEGY"
-	json_close_object
-
-	json_add_object openflux
-	json_add_boolean running "$flux_run"
-	json_add_string transport "Yandex.Docs"
-	json_add_int sessions 0
-	json_close_object
-
 	json_add_object processes
 	for name in openflux nfqws; do
 		case "$name" in openflux) pid=$flux_pid;; nfqws) pid=$nfq_pid;; esac
@@ -99,32 +51,19 @@ status() (
 	done
 	json_add_boolean watchdog "$(or_instance_running "$services" watchdog && echo 1 || echo 0)"
 	json_close_object
-
 	json_add_boolean nfqueue_rule "$(nft list chain inet fw4 openrkn_output >/dev/null 2>&1 && echo 1 || echo 0)"
+	json_dump
+)
 
-	json_add_object ports
-	json_add_object eth0
-	json_add_string role "WAN"
-	json_add_boolean up 1
-	json_add_int speed 1000
-	json_add_string ip ""
-	json_add_int rx_bps 0
-	json_add_int tx_bps 0
-	json_add_int rx_bytes 0
-	json_add_int tx_bytes 0
-	json_close_object
-	json_add_object eth1
-	json_add_string role "LAN"
-	json_add_boolean up 1
-	json_add_int speed 1000
-	json_add_string ip "192.168.1.1"
-	json_add_int rx_bps 0
-	json_add_int tx_bps 0
-	json_add_int rx_bytes 0
-	json_add_int tx_bytes 0
-	json_close_object
-	json_close_object
+capabilities() {
+	printf '%s\n' '{"ok":true,"api_version":2,"service_scope":"stack","modes":["hybrid"],"features":["status","dpi_state","get_config","configure","start_service","stop_service","restart_service","gen_mobile_profile","get_logs"],"unsupported":["sessions","kick_session","autotest","cores","tg_proxies","clients","set_client_profile","diag_check","traceroute"]}'
+}
 
+dpi_state() (
+	or_config
+	json_load '{"ok":true,"engine":"zapret","engines":[{"id":"zapret","name":"nfqws","desc":"Исходящие соединения OpenFlux / UID 453"}],"presets":[{"id":"general","name":"General","desc":"TCP fake + multisplit, badseq; QUIC fake ×6","tags":["TCP","TLS","QUIC"]},{"id":"youtube4k","name":"YouTube","desc":"TCP fake + multisplit, md5sig; QUIC fake ×6","tags":["TCP","QUIC"]},{"id":"discord-voice","name":"Discord Voice","desc":"TCP badseq; UDP 443 и 50000–50100 fake ×6","tags":["TCP","UDP"]}]}'
+	case "$OR_STRATEGY" in youtube) OR_STRATEGY=youtube4k;; discord) OR_STRATEGY=discord-voice;; esac
+	json_add_string preset "$OR_STRATEGY"
 	json_dump
 )
 
@@ -133,6 +72,9 @@ get_logs() (
 	json_load "$input" || { or_error invalid_json; return; }
 	json_get_type kind lines
 	json_get_var lines lines
+	json_get_var log_service service
+	[ -n "$log_service" ] || log_service=all
+	case "$log_service" in all|nfqws|openflux|watchdog) ;; *) or_error unsupported_log_service; return;; esac
 	if [ -z "$kind" ]; then lines=100
 	elif [ "$kind" != int ]; then or_error invalid_lines; return
 	fi
@@ -142,12 +84,13 @@ get_logs() (
 	}
 	logs=
 	if [ -f "$OR_LOG" ]; then
-		logs=$(tail -n "$lines" "$OR_LOG" | tail -c 65536)
+		logs=$(awk -v svc="$log_service" 'svc=="all" || index($0, " " svc ":")' "$OR_LOG" | tail -n "$lines" | tail -c 65536)
 	fi
 	json_init
 	json_add_boolean ok 1
 	json_add_string logs "$logs"
 	json_add_int requested_lines "$lines"
+	json_add_string service "$log_service"
 	json_dump
 )
 
@@ -160,29 +103,51 @@ mutate() (
 		/usr/libexec/openrkn/profile
 		return
 	fi
-	read -r input 2>/dev/null
-	if [ -n "$input" ] && json_load "$input" 2>/dev/null; then
-		json_get_var req_mode mode
-		json_get_var req_strat strategy
-		[ -z "$req_mode" ] || uci -q set openrkn.main.mode="$req_mode"
-		[ -z "$req_strat" ] || uci -q set openrkn.main.strategy="$req_strat"
-		uci -q commit openrkn
+	if [ "$action" = configure ]; then
+		. /usr/lib/openrkn/settings.sh
+		or_settings
+		return
 	fi
-	if [ "$action" = start ]; then
+	read -r input 2>/dev/null
+	[ -n "$input" ] || input='{}'
+	json_load "$input" || { or_error invalid_json; return; }
+	json_get_var req_service service
+	json_get_var req_mode mode
+	json_get_var req_strat strategy
+	json_get_var req_preset preset
+	case "$req_service" in ''|openrkn) ;; *) or_error service_control_is_stack_only; return;; esac
+	case "$req_mode" in ''|hybrid) ;; *) or_error unsupported_mode; return;; esac
+	[ -z "$req_strat" ] || [ -z "$req_preset" ] || [ "$req_strat" = "$req_preset" ] || { or_error conflicting_strategy; return; }
+	[ -n "$req_strat" ] || req_strat=$req_preset
+	. /usr/lib/openrkn/presets.sh
+	[ -z "$req_strat" ] || or_preset_valid "$req_strat" || { or_error unsupported_strategy; return; }
+	if [ "$action" != stop ]; then
 		or_config
 		[ "$OR_ENABLED" = 1 ] || { or_error disabled_in_uci; return; }
+		if [ -n "$req_mode" ] || [ -n "$req_strat" ]; then
+			[ -z "$req_mode" ] || uci -q set "openrkn.main.mode=$req_mode" || { or_error config_failed; return; }
+			[ -z "$req_strat" ] || uci -q set "openrkn.main.strategy=$req_strat" || { or_error config_failed; return; }
+			uci -q commit openrkn || { or_error config_failed; return; }
+			# Parameters must be applied even when the stack is already running.
+			[ ! -f "$OR_RUN/desired" ] || action=restart
+		fi
 	fi
 	/etc/init.d/openrkn "$action" >/dev/null 2>&1 || rc=$?
 	[ "$rc" = 0 ] || { or_error service_action_failed; return; }
 	json_init
 	json_add_boolean ok 1
 	json_add_string action "$action"
-	json_add_string state "$([ "$action" = start ] && echo starting || echo stopping)"
+	json_add_string state "$([ "$action" = stop ] && echo stopping || echo starting)"
 	json_dump
 )
 
 case "$2" in
 	status) status;;
+	capabilities) capabilities;;
+	get_config) . /usr/lib/openrkn/settings.sh; or_get_settings;;
+	configure) mutate configure;;
+	dpi_state) dpi_state;;
+	restart_service) mutate restart;;
 	get_logs) get_logs;;
 	start_service) mutate start;;
 	stop_service) mutate stop;;
