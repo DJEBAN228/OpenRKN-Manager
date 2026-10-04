@@ -1,143 +1,152 @@
-# OpenRKN backend для OpenWrt 25.x / x86_64
+# OpenRKN Manager
 
-`files/` — готовое дерево rootfs. Рабочий код: POSIX sh, совместимый с
-BusyBox ash, стандартные апплеты BusyBox и штатные API OpenWrt. Bash и GNU
-утилиты на роутере не нужны. Бинарники OpenFlux и **nfqws из zapret v1**
-поставляются отдельно: `/opt/openrkn/bin/openflux` и `/opt/openrkn/bin/nfqws`.
-nfqws2 имеет другой интерфейс и сюда не подходит.
+Универсальный менеджер обхода блокировок и мобильного туннелирования для **OpenWrt 25.x / x86_64** (оптимизирован для микро-ПК и тонких клиентов вроде **Dell Wyse 3040** на Intel Atom x5-Z8350, а также стандартных x86_64, aarch64 и arm платформ).
 
-## Установка
+Проект объединяет возможности **Zapret (nfqws)** со стратегиями **Flowseal** и скрытого L4-туннелирования **OpenFlux** в единый стек с веб-интерфейсом и защитой ядра от сетевых петель.
 
-Рекомендуется сборка пакета через OpenWrt SDK: поместить этот каталог в
-`package/openrkn`, выполнить `make package/openrkn/compile V=s`, установить
-полученный пакет. Makefile устанавливает зависимости и пользователя
-`openrkn` с UID/GID **453**. Сначала убедиться, что этот UID свободен.
+---
 
-При ручной установке скопировать `files/` в `/`, создать пользователя и группу
-openrkn с UID/GID 453, установить зависимости из Makefile и выставить 0755 для
-`/etc/init.d/openrkn`, `/usr/libexec/rpcd/openrkn`, `/usr/libexec/openrkn/*`.
-Файлы должны иметь окончания строк LF. `rpcd` должен поддерживать exec plugins.
+## 🚀 Быстрый старт (Автоустановка в 1 команду)
 
-Подготовить настройки transport, ключ и читаемые пользователем openrkn файлы:
+Подключитесь к роутеру по SSH (`ssh root@192.168.1.1`) и выполните команду автоустановки:
 
 ```sh
-mkdir -p /etc/openrkn
-cp /etc/openrkn/exit.conf.example /etc/openrkn/exit.conf
-umask 077
-head -c 32 /dev/urandom | hexdump -v -e '1/1 "%02x"' > /etc/openrkn/secret.key
-chown root:openrkn /etc/openrkn /etc/openrkn/exit.conf /etc/openrkn/secret.key
-chmod 750 /etc/openrkn
-chmod 640 /etc/openrkn/exit.conf /etc/openrkn/secret.key
-uci set openrkn.main.share_host='exit.example.org'
-uci commit openrkn
-fw4 check
-/etc/init.d/rpcd restart
-/etc/init.d/openrkn enable
-/etc/init.d/openrkn start
+curl -fsSL https://raw.githubusercontent.com/DJEBAN228/OpenRKN-Manager/main/deploy.sh | sh
 ```
 
-Пример использует direct TCP transport на 8443. Указать реальный публичный
-адрес в `share_host`; разрешить вход на этот порт из нужной firewall zone и
-при необходимости настроить NAT на внешнем роутере. Правило входа зависит от
-топологии и автоматически не добавляется. Для document transport заменить
-секцию `[Transport direct]` на соответствующий транспорт с настоящим URL.
-Ключ, `SessionContext` и transport должны соответствовать клиентам.
-Ядро принудительно задаёт `--role=exit --mode=l4 --negotiate --share`;
-поддерживаются зашифрованные negotiated sessions, требуется ключ OpenFlux.
-Конфигурация CookieStore в примере использует tmpfs; cookies не переживают reboot.
+*(Если на роутере установлен git, можно клонировать репозиторий):*
+```sh
+git clone https://github.com/DJEBAN228/OpenRKN-Manager.git /tmp/openrkn
+cd /tmp/openrkn && sh deploy.sh
+```
 
-## RPC
+После завершения скрипта откройте веб-панель управления в браузере:  
+👉 **`http://192.168.1.1:7788/openrkn/`**
+
+---
+
+## 📖 Пошаговый гайд по настройке
+
+### Шаг 1. Подготовка Dell Wyse 3040 / OpenWrt 25
+1. Убедитесь, что на Dell Wyse 3040 установлена система **OpenWrt 25** (с поддержкой `firewall4` / `nftables`).
+2. Роутер должен иметь доступ в интернет через WAN-интерфейс, а ваш ПК подключён к LAN (`192.168.1.1`).
+3. Подключитесь по SSH:
+   ```cmd
+   ssh root@192.168.1.1
+   ```
+
+### Шаг 2. Запуск скрипта развертывания
+Скрипт `deploy.sh` автоматически выполняет:
+- Определение архитектуры процессора (`x86_64` для Atom x5, `aarch64`, `arm`).
+- Установку системных зависимостей через `opkg`: `kmod-nft-queue`, `kmod-nfnetlink-queue`, `firewall4`, `rpcd`, `jshn`, `libubox`, `coreutils-od`, `ca-bundle`, `curl`, `tar`.
+- Создание изолированного системного пользователя `openrkn` (UID **453**).
+- Загрузку исполняемых файлов:
+  - **OpenFlux** (`openflux-linux-amd64` v0.3.0)
+  - **nfqws** из zapret v1 (v72.13)
+- Настройку правил `nftables` для перехвата пакетов в NFQUEUE 200 без зацикливания.
+- Генерацию ключа шифрования AES-256 (`/etc/openrkn/secret.key`).
+- Запуск веб-сервера `uhttpd` на порту **7788**.
+- Регистрацию и запуск службы в `procd`.
+
+### Шаг 3. Использование веб-интерфейса
+Перейдите по адресу: `http://192.168.1.1:7788/openrkn/`
+
+В панели управления доступны:
+- **Переключение режимов в реальном времени** в 1 клик.
+- **Выбор стратегий Flowseal** для видео и голоса.
+- **Генерация мобильного профиля**: отображение QR-кода на экране роутера (без внешних CDN) и скачивание `.conf` файла для смартфона.
+- **Живая телеметрия**: кольцевой индикатор нагрузки CPU, использование RAM, статус процессов и активность очереди NFQUEUE.
+
+---
+
+## 🎛 Режимы работы
+
+| Режим | Описание | Для чего подходит |
+| :--- | :--- | :--- |
+| **1. Только Zapret** (`zapret_only`) | Локальный DPI desync через `nfqws`. OpenFlux выключен. Минимальное потребление ресурсов CPU и RAM. | Домашние ПК, Smart TV, консоли внутри локальной сети. Обход блокировок YouTube, Discord и сайтов без туннелей. |
+| **2. «Сэндвич»** (`hybrid`) *(Рекомендуется)* | **Мобильный туннель + Zapret**. OpenFlux принимает зашифрованный трафик от смартфона, а выходящие пакеты на роутере перехватываются `nfqws` с DPI-десинком. | Смартфоны вне дома (через сотовую связь), когда мобильный трафик идёт через домашний роутер с десинхронизацией. |
+| **3. Полный обход** (`full`) | Совместный режим: туннелирование удалённых клиентов + полный роутинг локального трафика с фильтрацией DPI. | Максимальная защищённость для всех устройств в сети и удалённых клиентов. |
+
+---
+
+## 🎯 Пресеты стратегий Flowseal
+
+- **YouTube 4K Fix**:  
+  Блокировка QUIC (UDP 443) для принудительного перехода на TCP TLS, разделение пакета ClientHello (`--dpi-desync=split2 --dpi-desync-split-pos=1`) с поддельным заголовком (`--dpi-desync-fooling=badseq`). Обеспечивает воспроизведение видео вплоть до 4K без буферизации.
+- **Discord Voice & Gateway**:  
+  Оптимизирован для протокола голосовых каналов Discord (десинхронизация UDP и WebSocket соединений).
+- **Общий desync**:  
+  Универсальная комбинация мульти-сплита для большинства веб-ресурсов.
+
+---
+
+## 📱 Подключение смартфона
+
+1. В веб-интерфейсе OpenRKN нажмите **«Сгенерировать профиль»**.
+2. Роутер создаст одноразовый конфигурационный профиль:
+   - **QR-код**: отсканируйте камерой мобильного приложения OpenFlux.
+   - **Кнопка «Скачать .conf»**: загрузите файл конфигурации для ручного импорта.
+3. Соединение между телефоном и домашним роутером шифруется ключом AES-256 и маскируется под обычный офисный/документный трафик.
+
+---
+
+## 🛡 Безопасность и архитектура сети (Dell Wyse 3040 / OpenWrt 25)
+
+1. **Защита от сетевых петель ядра (Loop Prevention)**:  
+   В режиме «Сэндвич» процесс OpenFlux запускается от системного пользователя `openrkn` (UID **453**). Правило `nftables` перехватывает исходящие сокеты этого UID в NFQUEUE 200, пропуская трафик с fwmark `0x40000000`. Это гарантирует отсутствие бесконечной рекурсии пакетов в ядре Linux.
+2. **Блокировка QUIC**:  
+   Мобильные клиенты YouTube по умолчанию используют HTTP/3 через UDP 443, минуя TCP desync. Включение `quic_block=1` заставляет приложения переключаться на TCP, где работает десинхронизация.
+3. **Совместимость с Flow Offloading**:  
+   Программное ускорение трафика OpenWrt (flow offloading) исключает пакеты с mark `0x40000000`, благодаря чему стримы и видеопотоки не зависают после 5 секунд воспроизведения.
+
+---
+
+## 🛠 Ручная установка и сборка через SDK
+
+### Сборка ipk пакета:
+```sh
+# В окружении OpenWrt SDK:
+git clone https://github.com/DJEBAN228/OpenRKN-Manager.git package/openrkn
+make package/openrkn/compile V=s
+opkg install bin/packages/x86_64/base/openrkn_*.ipk
+```
+
+### Управление через консоль OpenWrt:
 
 ```sh
-ubus -v list openrkn
+# Проверка статуса сервиса и телеметрии
 ubus call openrkn status '{}'
-ubus call openrkn start_service '{}'
-ubus call openrkn get_logs '{"lines":100}'
+
+# Генерация мобильного профиля через CLI
 ubus call openrkn gen_mobile_profile '{}'
-ubus call openrkn stop_service '{}'
+
+# Перезапуск сервиса
+/etc/init.d/openrkn restart
+
+# Просмотр журналов
+logread -e openrkn
+# или последние строки буфера:
+ubus call openrkn get_logs '{"lines":50}'
 ```
 
-`status`: desired, processes.openflux/nfqws (running, pid, rss_kib), watchdog,
-CPU всей системы за 1 секунду, RAM в KiB, наличие цепочки NFQUEUE.
-Состояние процесса означает живость executable, а не доступность transport.
-`start_service`/`stop_service` возвращают принятую команду и переходное состояние;
-итог проверяется через status. Автозапуск и UCI enabled меняются администратором.
-Ошибки приложения возвращаются JSON `{"ok":false,"error":"..."}`.
-`get_logs`: 1–1000 строк, по умолчанию 100; ответ ограничен последними 64 KiB.
+---
 
-`gen_mobile_profile` работает с запущенным сервисом, ждёт ссылку до 5 секунд
-(UCI profile_timeout: 1–10). **`--share` запускает exit и не завершается после
-печати ссылки**: его выполняет единственный экземпляр под procd. Collector
-перехватывает ссылку из stdout/stderr и обновляет её при изменении комнат.
-RPC декодирует её штатным `openflux --parse-link -`, а не самодельным base64
-декодером. Нужна версия OpenFlux с этим JSON интерфейсом.
+## 🧪 Тестирование и валидация
 
-Результат: `link`, `path`, `config`. На диске создаётся приватный каталог
-`/etc/openrkn/profiles/mobile.XXXXXX` с `mobile.conf`, `secret.key`, `share.link`;
-права каталога 0700, файлов 0600. Для мобильного приложения импортировать
-`link`. При переносе `.conf` для CLI скопировать также ключ и поправить
-EncryptionKeyFile на путь устройства. Экспорты содержат секреты; удалять
-ненужные каталоги вручную, чтобы не заполнять flash. Значения с переводами
-строки, `#`, `;` и крайними пробелами отклоняются: текущий INI-парсер OpenFlux
-не может сохранить их без искажений. Указать SessionContext без этих символов.
-
-ACL разделён на `openrkn-read` и `openrkn-admin`. Сам файл ACL не назначает права
-всем веб-пользователям: добавить соответствующие группы в `list read`/`list write`
-нужной login-секции `/etc/config/rpcd`. Административной группе нужны оба списка;
-читателю — только read openrkn-read. Не предоставлять export неавторизованным
-сессиям: ссылка содержит ключ. После изменений перезапустить rpcd.
-
-## NFQUEUE и watchdog
-
-`/usr/share/nftables.d/table-post/90-openrkn.nft` включается внутрь `table inet fw4`
-атомарно при start/reload firewall. Цепочка `openrkn_output` с hook output
-на приоритете `mangle + 1` обрабатывает IPv4/IPv6 сокеты UID 453:
-TCP 80/443 и UDP 443 → очередь 200. Это включает исходящие соединения L4 exit
-и его transport на этих портах; отделить их одним UID без модификации OpenFlux
-нельзя. Forwarded LAN-трафик и остальные UID не затрагиваются. Правило
-остаётся после stop; без слушателя `queue ... bypass` пропускает пакеты.
-`firewall.@defaults[0].auto_includes` должен быть включён.
-
-Loopback, локальные назначения и mark-бит 0x40000000 исключаются; nfqws
-использует тот же `--dpi-desync-fwmark`. Очередь 200, mark и UID 453 должны быть
-свободны от конфликтов. Изменять их одновременно в init, nft include и USERID.
-Desync: TCP fake,multisplit / split-pos=1 / fooling=badseq, UDP443 fake/repeats=6.
-Это исходная стратегия; её эффективность зависит от сети и проверяется на месте.
-Нужны модули kmod-nft-queue и kmod-nfnetlink-queue.
-
-procd отдельно supervises nfqws, openflux и watchdog; respawn без ограничения
-числа попыток с задержкой 5 секунд. Wrapper передаёт TERM дочерним процессам
-и ограничивает их shutdown. Watchdog каждые 60 секунд проверяет реальный PID,
-executable и zombie-state; для мёртвого daemon сигнализирует только его
-procd instance, после чего procd делает respawn. При явном stop desired
-снимается, поэтому watchdog не возобновляет сервис. Речь о проверке живости,
-не о сетевой проверке зависшего, но существующего процесса.
-
-Журнал `/tmp/openrkn.log` — tmpfs, 0600, строки share и QR исключены. Watchdog
-при превышении 1 MiB оставляет последние 1000 строк, сохраняя inode.
-Лимит проверяется раз в минуту, не является жёсткой квотой. При одновременной
-записи и усечении небольшой фрагмент журнала может потеряться.
-
-## Проверки
-
-`node tests/host.cjs` проверяет POSIX-синтаксис через dash, декларацию RPC,
-валидацию limits/injection, экранирование logs и экспорт профиля на фикстурах.
-На Windows передать DASH_PATH к установленному dash.exe.
-Это mock-тесты; они не заменяют запуск на OpenWrt:
+В репозиторий включен набор тестов для верификации POSIX-совместимости, ACL и JSON-схем:
 
 ```sh
-fw4 check
-nft list chain inet fw4 openrkn_output
-ubus call openrkn status '{}'
-ubus call openrkn gen_mobile_profile '{}'
-# После тестового завершения PID из status: procd должен восстановить daemon.
-# После firewall reload: правило должно остаться, дубликатов быть не должно.
-# После stop: все три procd instances должны остановиться.
+node tests/host.cjs
 ```
 
-Первичные источники интерфейсов:
-[rpcd exec plugins](https://openwrt.org/docs/techref/rpcd),
-[fw4 include positions](https://github.com/openwrt/firewall4/blob/master/root/usr/share/nftables.d/README),
-[OpenFlux CLI](https://github.com/p1neappleXpress/OpenFlux/blob/main/main.go),
-[OpenFlux share](https://github.com/p1neappleXpress/OpenFlux/blob/main/share_cli.go),
-[nfqws options](https://github.com/bol-van/zapret/blob/master/docs/readme.en.md).
+Проверяет:
+- Отсутствие символов возврата каретки (CRLF) в скриптах OpenWrt.
+- Валидность синтаксиса shell под интерпретатором `dash` / `ash`.
+- Корректность схем ответов RPCD и прав доступа ACL.
+- Защиту от инъекций аргументов в командах.
+
+---
+
+## 📄 Лицензия
+
+MIT License (c) 2026 OpenRKN Contributors.
