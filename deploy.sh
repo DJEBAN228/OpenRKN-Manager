@@ -29,13 +29,26 @@ case "$ARCH" in
         ;;
 esac
 
-echo "[1/7] Установка необходимых пакетов OpenWrt..."
-opkg update
-opkg install rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle curl tar gzip coreutils-od 2>/dev/null || true
+echo "[1/7] Проверка и установка пакетов..."
+if command -v apk >/dev/null 2>&1; then
+    echo "  -> Обнаружен apk (OpenWrt 24.10+ / 25.x)..."
+    apk update 2>/dev/null || true
+    apk add rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-certificates curl tar gzip 2>/dev/null || true
+elif command -v opkg >/dev/null 2>&1; then
+    echo "  -> Обнаружен opkg (OpenWrt legacy)..."
+    opkg update 2>/dev/null || true
+    opkg install rpcd ubus uci libubox jshn firewall4 kmod-nft-queue kmod-nfnetlink-queue ca-bundle curl tar gzip coreutils-od 2>/dev/null || true
+elif command -v apt-get >/dev/null 2>&1; then
+    echo "  -> Обнаружен apt (Debian/Ubuntu/Armbian)..."
+    apt-get update -y 2>/dev/null || true
+    apt-get install -y curl tar gzip ca-certificates 2>/dev/null || true
+else
+    echo "  -> Пакетный менеджер не найден или пакеты встроены в прошивку, продолжаем..."
+fi
 
 echo "[2/7] Создание системного пользователя openrkn (UID 453)..."
-grep -q '^openrkn:' /etc/passwd || echo 'openrkn:x:453:453:openrkn:/var/run/openrkn:/bin/false' >> /etc/passwd
-grep -q '^openrkn:' /etc/group || echo 'openrkn:x:453:' >> /etc/group
+grep -q '^openrkn:' /etc/passwd 2>/dev/null || echo 'openrkn:x:453:453:openrkn:/var/run/openrkn:/bin/false' >> /etc/passwd 2>/dev/null || true
+grep -q '^openrkn:' /etc/group 2>/dev/null || echo 'openrkn:x:453:' >> /etc/group 2>/dev/null || true
 
 echo "[3/7] Подготовка каталогов..."
 mkdir -p /opt/openrkn/bin /etc/openrkn /etc/openrkn/profiles /var/run/openrkn /www/openrkn
@@ -74,7 +87,13 @@ chmod 755 /etc/init.d/openrkn /usr/libexec/rpcd/openrkn /usr/libexec/openrkn/* 2
 # Генерация ключа шифрования если отсутствует
 if [ ! -f /etc/openrkn/secret.key ]; then
     echo "  -> Генерация ключа шифрования AES-256..."
-    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/openrkn/secret.key
+    if command -v od >/dev/null 2>&1; then
+        head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > /etc/openrkn/secret.key
+    elif command -v hexdump >/dev/null 2>&1; then
+        head -c 32 /dev/urandom | hexdump -v -e '1/1 "%02x"' > /etc/openrkn/secret.key
+    else
+        head -c 32 /dev/urandom | tr -dc 'a-f0-9' | head -c 64 > /etc/openrkn/secret.key
+    fi
     chmod 600 /etc/openrkn/secret.key
 fi
 
@@ -84,22 +103,31 @@ if [ ! -f /etc/openrkn/exit.conf ]; then
 fi
 
 echo "[6/7] Настройка uhttpd на порт 7788..."
-uci -q get uhttpd.openrkn >/dev/null || {
-    uci set uhttpd.openrkn=uhttpd
-    uci set uhttpd.openrkn.listen_http='0.0.0.0:7788'
-    uci set uhttpd.openrkn.home='/www'
-    uci set uhttpd.openrkn.cgi_prefix='/cgi-bin'
-    uci commit uhttpd
-    /etc/init.d/uhttpd restart 2>/dev/null || true
-}
+if command -v uci >/dev/null 2>&1; then
+    uci -q get uhttpd.openrkn >/dev/null || {
+        uci set uhttpd.openrkn=uhttpd
+        uci set uhttpd.openrkn.listen_http='0.0.0.0:7788'
+        uci set uhttpd.openrkn.home='/www'
+        uci set uhttpd.openrkn.cgi_prefix='/cgi-bin'
+        uci commit uhttpd
+        [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd restart 2>/dev/null || true
+    }
+fi
 
 echo "[7/7] Запуск служб..."
-/etc/init.d/rpcd restart
-fw4 reload 2>/dev/null || true
-/etc/init.d/openrkn enable
-/etc/init.d/openrkn restart
+[ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd restart 2>/dev/null || true
+if command -v fw4 >/dev/null 2>&1; then
+    fw4 reload 2>/dev/null || true
+fi
+if [ -x /etc/init.d/openrkn ]; then
+    /etc/init.d/openrkn enable 2>/dev/null || true
+    /etc/init.d/openrkn restart 2>/dev/null || true
+fi
 
-LAN_IP=$(uci -q get network.lan.ipaddr || echo "192.168.1.1")
+LAN_IP="192.168.1.1"
+if command -v uci >/dev/null 2>&1; then
+    LAN_IP=$(uci -q get network.lan.ipaddr || echo "192.168.1.1")
+fi
 
 echo ""
 echo "=========================================================="
