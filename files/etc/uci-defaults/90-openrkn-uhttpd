@@ -1,5 +1,11 @@
 #!/bin/sh
 set -e
+# Static UI must be readable by uhttpd even after installation with umask 077.
+# This tree contains public assets only; secret keys live in /etc/openrkn.
+if [ -d /www/openrkn ]; then
+	find /www/openrkn -type d -exec chmod 755 '{}' \;
+	find /www/openrkn -type f -exec chmod 644 '{}' \;
+fi
 uci -q get uhttpd.openrkn >/dev/null || {
 	uci set uhttpd.openrkn=uhttpd
 	uci add_list uhttpd.openrkn.listen_http='0.0.0.0:7788'
@@ -11,6 +17,8 @@ uci set uhttpd.openrkn.ubus_socket='/var/run/ubus/ubus.sock'
 uci set uhttpd.openrkn.no_ubusauth='0'
 uci set uhttpd.openrkn.rfc1918_filter='1'
 uci set uhttpd.openrkn.no_dirlists='1'
+uci -q delete uhttpd.openrkn.index_page || :
+uci add_list uhttpd.openrkn.index_page='index.html'
 uci set uhttpd.openrkn.script_timeout='60'
 uci set uhttpd.openrkn.network_timeout='60'
 uci -q get uhttpd.main >/dev/null && uci set uhttpd.main.ubus_prefix='/ubus'

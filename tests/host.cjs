@@ -58,6 +58,22 @@ or_config() { OR_PROFILE_TIMEOUT=1; }
 try {
   fs.mkdirSync(path.join(temp, 'run'));
   fs.mkdirSync(path.join(temp, 'profiles'));
+  const webDir = t + '/web';
+  fs.mkdirSync(webDir, { mode: 0o700 });
+  fs.mkdirSync(webDir + '/assets', { mode: 0o700 });
+  fs.writeFileSync(webDir + '/index.html', '<!doctype html>', { mode: 0o600 });
+  fs.writeFileSync(webDir + '/assets/app.js', '// public asset', { mode: 0o600 });
+  const httpDefaults = fs.readFileSync(path.join(root, 'files/etc/uci-defaults/90-openrkn-uhttpd'), 'utf8')
+    .replaceAll('/www/openrkn', webDir);
+  fs.writeFileSync(t + '/http-defaults', `PATH=/usr/bin:/bin\nexport PATH\nuci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/http.args')}; }\n` + httpDefaults);
+  run([t + '/http-defaults']);
+  const httpArgs = fs.readFileSync(t + '/http.args', 'utf8');
+  assert(httpArgs.includes('uhttpd.openrkn.index_page=index.html'));
+  assert(httpArgs.includes('uhttpd.openrkn.no_ubusauth=0'));
+  if (process.platform !== 'win32') {
+    for (const directory of [webDir, webDir + '/assets']) assert.equal(fs.statSync(directory).mode & 0o777, 0o755);
+    for (const file of [webDir + '/index.html', webDir + '/assets/app.js']) assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  }
   const confDir = t + '/configuration';
   fs.mkdirSync(confDir);
   fs.writeFileSync(confDir + '/secret.key', 'test-key');
@@ -121,7 +137,7 @@ uci() { printf '%s\\n' "$@" >> ${shellQuote(t + '/uci.args')}; }
   assert.equal(fs.readdirSync(path.join(temp, 'profiles')).length, 1, 'failed export must clean up');
   assert.equal(exportProfile({ config: { ...fixture.config, context: '' } }).ok, true, 'empty context must not fail shell group');
   assert.equal(exportProfile({ config: { ...fixture.config, negotiate: false } }).error, 'profile_requires_negotiated_session');
-  console.log('PASS: POSIX syntax, RPC schema/ACL, log validation/escaping/bounds, profile export and cleanup');
+  console.log('PASS: POSIX syntax, uhttpd permissions/index, RPC schema/ACL, logs, Mail.ru settings, profile export and cleanup');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
 }

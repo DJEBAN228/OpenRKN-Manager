@@ -15,6 +15,22 @@ sh /tmp/openrkn-install.sh
 
 Откройте **http://192.168.1.1:7788/openrkn/** (замените IP на адрес LAN роутера). Вход — существующие логин и пароль OpenWrt, обычно root. Установщик не меняет пароль и не отключает авторизацию ubus.
 
+Если после установки прежней версии `/openrkn/` возвращает **403 Forbidden**, исправьте права публичной оболочки и индекс uhttpd через SSH:
+
+```sh
+find /www/openrkn -type d -exec chmod 755 '{}' \;
+find /www/openrkn -type f -exec chmod 644 '{}' \;
+chmod 755 /usr/lib/openrkn /usr/libexec/openrkn
+chmod 644 /usr/lib/openrkn/*.sh
+uci -q delete uhttpd.openrkn.index_page
+uci add_list uhttpd.openrkn.index_page='index.html'
+uci commit uhttpd
+/etc/init.d/uhttpd restart
+/etc/init.d/openrkn restart
+```
+
+Открывайте адрес с портом **7788**. Если 403 остаётся, проверьте `ls -ld /www /www/openrkn /www/openrkn/index.html` и `uci show uhttpd.openrkn`.
+
 ## Подключение телефона
 
 1. Откройте вкладку OpenFlux. По умолчанию выбран **Cups.online**, который создаёт комнаты автоматически; nfqws выключен.

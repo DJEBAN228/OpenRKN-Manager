@@ -60,6 +60,10 @@ fi
 [ ! -f /etc/config/openrkn ] || cp /etc/config/openrkn "$work/config.saved"
 mkdir -p /opt/openrkn/bin /etc/openrkn/profiles /var/run/openrkn
 cp -R "$source_dir/files/"* /
+# cp respects umask for new files/directories. Runtime libraries must also be
+# readable by the unprivileged OpenFlux wrapper; keep secrets private below.
+chmod 755 /usr/lib/openrkn /usr/libexec/openrkn
+chmod 644 /usr/lib/openrkn/*.sh
 [ ! -f "$work/config.saved" ] || cp "$work/config.saved" /etc/config/openrkn
 cp "$work/openflux" /opt/openrkn/bin/openflux
 cp "$work/zapret-v72.13/binaries/linux-x86_64/nfqws" /opt/openrkn/bin/nfqws
