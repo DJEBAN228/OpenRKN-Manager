@@ -20,9 +20,9 @@ start_service() {
     or_zapret_probe
     [ "$ZP_STATE" = detected ] || logger -t openrkn "External Zapret needs attention: $ZP_STATE"
     umask 077
-    mkdir -p "$OR_RUN" /etc/openrkn/profiles || return 1
+    mkdir -p "$OR_RUN" || return 1
     chown openrkn:openrkn "$OR_RUN" || return 1
-    chmod 700 "$OR_RUN" /etc/openrkn/profiles
+    chmod 700 "$OR_RUN"
     [ ! -L "$OR_LOG" ] || return 1
     touch "$OR_LOG" || return 1
     chown openrkn:openrkn "$OR_LOG" || return 1

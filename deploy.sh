@@ -45,17 +45,18 @@ grep -q '"code"' "$work/parser.json" || { echo 'Бинарник OpenFlux не �
 
 echo '[4/6] Установка бэкенда и оболочки'
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-if [ -f "$script_dir/files/www/openrkn/app.js" ] && [ "$(cat "$script_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.1 ]; then source_dir=$script_dir
+if [ -f "$script_dir/files/www/openrkn/app.js" ] && [ "$(cat "$script_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.2 ]; then source_dir=$script_dir
 else
     fetch 'https://github.com/DJEBAN228/OpenRKN-Manager/archive/refs/heads/main.tar.gz' "$work/source.tar.gz"
     tar -xzf "$work/source.tar.gz" -C "$work"
     source_dir="$work/OpenRKN-Manager-main"
 fi
 [ -f "$source_dir/files/www/openrkn/app.js" ] || { echo 'Неполное дерево файлов OpenRKN.' >&2; exit 1; }
-[ "$(cat "$source_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.1 ] || { echo 'Версия файлов не совпадает с установщиком.' >&2; exit 1; }
+[ "$(cat "$source_dir/files/usr/share/openrkn/version" 2>/dev/null || :)" = 0.3.2 ] || { echo 'Версия файлов не совпадает с установщиком.' >&2; exit 1; }
 [ ! -x /etc/init.d/openrkn ] || /etc/init.d/openrkn stop
 [ ! -f /etc/config/openrkn ] || cp /etc/config/openrkn "$work/config.saved"
-mkdir -p /opt/openrkn/bin /etc/openrkn/profiles /var/run/openrkn
+mkdir -p /opt/openrkn/bin /etc/openrkn /var/run/openrkn
+rm -rf /etc/openrkn/profiles
 cp -R "$source_dir/files/"* /
 # cp respects umask for new files/directories. Runtime libraries must also be
 # readable by the unprivileged OpenFlux wrapper; keep secrets private below.
@@ -86,8 +87,6 @@ uci commit openrkn
 chown root:openrkn /etc/openrkn /etc/openrkn/secret.key /etc/openrkn/exit.conf
 chmod 750 /etc/openrkn
 chmod 640 /etc/openrkn/secret.key /etc/openrkn/exit.conf
-chown root:root /etc/openrkn/profiles
-chmod 700 /etc/openrkn/profiles
 chown openrkn:openrkn /var/run/openrkn
 chmod 700 /var/run/openrkn
 
